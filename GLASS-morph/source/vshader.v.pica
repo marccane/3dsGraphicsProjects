@@ -1,0 +1,35 @@
+; GLASS (ES2) showcase shader: per-vertex MORPH between two shapes, driven by a
+; uniform. This is impossible on picaGL's fixed-function pipeline — the position
+; each frame is computed by *our* program, not a built-in matrix multiply.
+;
+;   outpos.xy = posA + morph.x * (posB - posA)        (linear interpolation)
+;   outpos.zw = (0, 1)
+;   outclr    = per-vertex colour
+
+.fvec morph            ; morph.x = t in [0,1], animated on the CPU
+
+.constf consts(0.0, 1.0, 0.0, 0.0)
+
+.out outpos position
+.out outclr color
+
+.in inposA v0          ; shape A position (xy)
+.in inposB v1          ; shape B position (xy)
+.in inclr  v2          ; colour (rgb)
+
+.proc main
+	; Copy inputs to temps first: a PICA instruction may read only ONE input (v) register.
+	mov r0.xy, inposA          ; r0 = posA
+	mov r1.xy, inposB          ; r1 = posB
+	; delta = posB - posA
+	add r2.xy, r1, -r0
+	; pos = posA + t*delta
+	mul r2.xy, morph.xxxx, r2
+	add r2.xy, r2, r0
+	; z = 0, w = 1
+	mov r2.z, consts.xxxx
+	mov r2.w, consts.yyyy
+	mov outpos, r2
+	mov outclr, inclr
+	end
+.end
