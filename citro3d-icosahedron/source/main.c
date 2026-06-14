@@ -188,7 +188,7 @@ int main()
 		const char* modeStr;
 		if (dynamic) {
 			// Sync opacity to the blast: assembled = near-solid, blown apart = ghostly.
-			aFloor = -0.90f * bloom;       // bloom 0 -> 0.90, bloom 1 -> 0.10
+			aFloor = 0.90f - 0.90f * bloom;       // bloom 0 -> 0.90
 			aGain  = 1.0f - aFloor;
 			modeStr = "DYNAMIC (synced)";
 		} else if (solid) {
