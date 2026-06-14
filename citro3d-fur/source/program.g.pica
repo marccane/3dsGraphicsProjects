@@ -1,0 +1,96 @@
+; Geometry shader — FUR (shell/fin amplification).
+;
+; Receives one whole triangle (stride 6: v0..v5 = 3 verts x {pos,colour}) and
+; emits TWO primitives:
+;   (1) the base surface triangle (the solid body), shaded by its face normal;
+;   (2) a tapered "hair" spike growing from the face centroid along that normal.
+; The hair length is an animated uniform; an optional `wind` vector bends the tips.
+; Emitting extra geometry per primitive is something only a geometry shader can do.
+.gsh point c0
+
+.fvec projection[4]    ; MVP (perspective * view * model-rotation)
+.fvec params           ; x = fur length
+.fvec wind             ; xyz = tip bend (w = 0)
+
+.constf consts(0.0, 1.0, 0.3333333, 0.18)   ; x=0 ; y=1 ; z=1/3 ; w=hair half-width
+.constf consts2(0.55, 0.0, 0.0, 0.0)        ; x = ambient
+.constf lightdir(0.4082, 0.4082, 0.8165, 0.0)
+.alias  one     consts.yyyy
+.alias  third   consts.zzzz
+.alias  hwidth  consts.wwww
+.alias  ambient consts2.xxxx
+
+.out outpos position
+.out outclr color
+
+.entry gmain
+.proc gmain
+	; edges + face normal (one input register per instruction)
+	mov r0, v0
+	add r1, v2, -r0           ; edge1 = v1 - v0
+	add r2, v4, -r0           ; edge2 = v2 - v0
+	mul r3, r1.yzxw, r2.zxyw
+	mul r4, r1.zxyw, r2.yzxw
+	add r3, r3, -r4           ; normal (unnormalised)
+	dp3 r4, r3, r3
+	rsq r4, r4
+	mul r3, r3, r4            ; r3 = unit face normal
+
+	; diffuse shading term
+	dp3 r5, lightdir, r3      ; const src1
+	max r5, ambient, r5       ; r5 = max(N·L, ambient)
+
+	; centroid
+	mov r6, v0
+	add r6, v2, r6
+	add r6, v4, r6
+	mul r6, third, r6         ; r6 = centroid (const src1)
+
+	; --- (1) base surface triangle ---
+	setemit 0
+	mov r8, v0
+	mul r9, v1, r5
+	call project_emit
+	emit
+	setemit 1
+	mov r8, v2
+	mul r9, v3, r5
+	call project_emit
+	emit
+	setemit 2, prim
+	mov r8, v4
+	mul r9, v5, r5
+	call project_emit
+	emit
+
+	; --- (2) hair spike: base near centroid, tip extruded along the normal ---
+	mul r7, params.xxxx, r3   ; normal * furLen   (uniform src1)
+	add r7, r6, r7            ; centroid + normal*furLen
+	add r7, wind, r7          ; + wind bend       (uniform src1) -> r7 = tip
+	mul r10, hwidth, r1       ; edge1 * halfWidth  (const src1)  -> base offset
+
+	setemit 0
+	add r8, r6, r10           ; base1 = centroid + offset
+	mul r9, v1, r5            ; root colour (shaded, darker)
+	call project_emit
+	emit
+	setemit 1
+	add r8, r6, -r10          ; base2 = centroid - offset
+	mul r9, v1, r5
+	call project_emit
+	emit
+	setemit 2, prim
+	mov r8, r7               ; tip
+	mov r9, v1               ; tip colour (full bright -> sheen)
+	call project_emit
+	emit
+	end
+.end
+
+.proc project_emit
+	dp4 outpos.x, projection[0], r8
+	dp4 outpos.y, projection[1], r8
+	dp4 outpos.z, projection[2], r8
+	dp4 outpos.w, projection[3], r8
+	mov outclr, r9
+.end
