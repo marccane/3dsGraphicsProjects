@@ -36,15 +36,25 @@
 	rsq r4, r4
 	mul r3, r3, r4            ; r3 = unit face normal
 
-	; diffuse shading term
-	dp3 r5, lightdir, r3      ; const src1
-	max r5, ambient, r5       ; r5 = max(N·L, ambient)
-
 	; centroid
 	mov r6, v0
 	add r6, v2, r6
 	add r6, v4, r6
 	mul r6, third, r6         ; r6 = centroid (const src1)
+
+	; Flip the normal to point OUTWARD. The cube that builds the sphere doesn't wind
+	; all 6 faces the same way, so cross(e1,e2) points inward for ~half of them. The
+	; ball is centred on the origin, so "outward" = same side as the centroid:
+	;   n *= sign(n · centroid)
+	dp3 r11, r3, r6          ; d = normal · centroid
+	mul r12, r11, r11        ; d*d
+	rsq r12, r12             ; 1/|d|
+	mul r11, r11, r12        ; sign(d) = d/|d| = +/-1
+	mul r3, r11, r3          ; outward-facing normal
+
+	; diffuse shading term (uses the corrected normal)
+	dp3 r5, lightdir, r3      ; const src1
+	max r5, ambient, r5       ; r5 = max(N·L, ambient)
 
 	; --- (1) base surface triangle ---
 	setemit 0
