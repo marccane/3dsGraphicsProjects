@@ -23,11 +23,13 @@
 
 typedef struct { float position[3]; float color[4]; } vertex;
 
-#define SUBDIV   7                          // cells per cube-face edge -> hair density
-#define MAX_VTX  (6 * SUBDIV * SUBDIV * 6)   // 6 faces * cells * 6 verts/cell
+#define MIN_SUBDIV 1
+#define MAX_SUBDIV 16                          // cells per cube-face edge (D-pad L/R)
+#define MAX_VTX  (6 * MAX_SUBDIV * MAX_SUBDIV * 6) // 6 faces * cells * 6 verts/cell
 
 static vertex vertex_list[MAX_VTX];
 static int    vtx_count = 0;
+static int    subdiv = 7;                       // current subdivision (= fur density)
 
 static DVLB_s* program_dvlb;
 static shaderProgram_s program;
@@ -67,14 +69,15 @@ static void push(const float p[3])
 
 static void buildFurBall(void)
 {
+	vtx_count = 0;
 	const float faces[6][2] = { {0,+1},{0,-1},{1,+1},{1,-1},{2,+1},{2,-1} };
 	for (int fi = 0; fi < 6; ++fi) {
 		int axis = (int)faces[fi][0];
 		float sign = faces[fi][1];
-		for (int j = 0; j < SUBDIV; ++j) {
-			for (int i = 0; i < SUBDIV; ++i) {
-				float u0 = -1.0f + 2.0f*i/SUBDIV,     u1 = -1.0f + 2.0f*(i+1)/SUBDIV;
-				float v0 = -1.0f + 2.0f*j/SUBDIV,     v1 = -1.0f + 2.0f*(j+1)/SUBDIV;
+		for (int j = 0; j < subdiv; ++j) {
+			for (int i = 0; i < subdiv; ++i) {
+				float u0 = -1.0f + 2.0f*i/subdiv,     u1 = -1.0f + 2.0f*(i+1)/subdiv;
+				float v0 = -1.0f + 2.0f*j/subdiv,     v1 = -1.0f + 2.0f*(j+1)/subdiv;
 				float p00[3], p10[3], p11[3], p01[3];
 				facePoint(axis, sign, u0, v0, p00);
 				facePoint(axis, sign, u1, v0, p10);
@@ -85,6 +88,15 @@ static void buildFurBall(void)
 			}
 		}
 	}
+}
+
+// Rebuild the sphere at the current `subdiv` and re-upload it to the GPU VBO.
+// (CPU writes to linear memory must be flushed before the GPU reads them.)
+static void rebuildGeometry(void)
+{
+	buildFurBall();
+	memcpy(vbo_data, vertex_list, sizeof(vertex) * vtx_count);
+	GSPGPU_FlushDataCache(vbo_data, sizeof(vertex) * vtx_count);
 }
 
 static void sceneInit(void)
@@ -104,9 +116,8 @@ static void sceneInit(void)
 	AttrInfo_AddLoader(attrInfo, 0, GPU_FLOAT, 3); // v0 = position
 	AttrInfo_AddLoader(attrInfo, 1, GPU_FLOAT, 4); // v1 = colour
 
-	buildFurBall();
-	vbo_data = linearAlloc(sizeof(vertex) * vtx_count);
-	memcpy(vbo_data, vertex_list, sizeof(vertex) * vtx_count);
+	vbo_data = linearAlloc(sizeof(vertex) * MAX_VTX); // max-sized; refilled when subdiv changes
+	rebuildGeometry();
 
 	C3D_BufInfo* bufInfo = C3D_GetBufInfo();
 	BufInfo_Init(bufInfo);
@@ -161,9 +172,10 @@ int main()
 	printf("\x1b[2;3H=== Furry Ball (geoshader) ===");
 	printf("\x1b[3;5Heach triangle sprouts a hair");
 	printf("\x1b[6;2HControls:");
-	printf("\x1b[7;4HD-pad up/down  fur length");
-	printf("\x1b[8;4HB              toggle wind");
-	printf("\x1b[9;4HSTART          quit");
+	printf("\x1b[7;4HD-pad U/D   fur length");
+	printf("\x1b[8;4HD-pad L/R   fur amount (subdiv)");
+	printf("\x1b[9;4HB           toggle wind");
+	printf("\x1b[10;4HSTART       quit");
 
 	float ax = 0.0f, ay = 0.0f, tp = 0.0f, tw = 0.0f;
 	float furBase = 0.25f;     // D-pad adjustable
@@ -181,6 +193,10 @@ int main()
 		if (furBase < 0.0f)  furBase = 0.0f;
 		if (furBase > 0.6f)  furBase = 0.6f;
 
+		// D-pad left/right: fewer/more subdivisions -> fewer/more hairs (rebuild the sphere).
+		if ((kDown & KEY_DRIGHT) && subdiv < MAX_SUBDIV) { subdiv++; rebuildGeometry(); }
+		if ((kDown & KEY_DLEFT)  && subdiv > MIN_SUBDIV) { subdiv--; rebuildGeometry(); }
+
 		ax += 0.008f;
 		ay += 0.013f;
 		tp += 0.040f;
@@ -190,8 +206,9 @@ int main()
 		float windX = windOn ? 0.13f * sinf(tw)        : 0.0f;
 		float windZ = windOn ? 0.10f * sinf(tw * 0.8f) : 0.0f;
 
-		printf("\x1b[12;2HFur length : %.2f  ", furLen);
-		printf("\x1b[13;2HWind       : %-3s", windOn ? "ON" : "OFF");
+		printf("\x1b[13;2HFur length : %.2f  ", furLen);
+		printf("\x1b[14;2HSubdiv     : %2d  (%d hairs)   ", subdiv, vtx_count / 3);
+		printf("\x1b[15;2HWind       : %-3s", windOn ? "ON" : "OFF");
 
 		C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
 			C3D_RenderTargetClear(target, C3D_CLEAR_ALL, CLEAR_COLOR, 0);
