@@ -197,6 +197,10 @@ int main()
 	float furBase = 0.25f;     // D-pad adjustable
 	bool  windOn = false;
 
+	u64   fpsLast = osGetTime(); // ms
+	int   fpsFrames = 0;
+	float fps = 0.0f;
+
 	while (aptMainLoop())
 	{
 		hidScanInput();
@@ -226,6 +230,16 @@ int main()
 		printf("\x1b[13;2HFur length : %.2f  ", furLen);
 		printf("\x1b[14;2HSubdiv     : %2d  (%d hairs)   ", subdiv, vtx_count / 3);
 		printf("\x1b[15;2HWind       : %-3s", windOn ? "ON" : "OFF");
+
+		// Measured FPS, updated ~twice a second; pinned bottom-left (row 30).
+		++fpsFrames;
+		u64 nowMs = osGetTime();
+		if (nowMs - fpsLast >= 500) {
+			fps = fpsFrames * 1000.0f / (float)(nowMs - fpsLast);
+			fpsFrames = 0;
+			fpsLast = nowMs;
+		}
+		printf("\x1b[30;1HFPS: %4.1f ", fps);
 
 		C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
 			C3D_RenderTargetClear(target, C3D_CLEAR_ALL, CLEAR_COLOR, 0);
