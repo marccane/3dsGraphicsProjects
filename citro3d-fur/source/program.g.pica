@@ -11,14 +11,15 @@
 .fvec projection[4]    ; MVP (perspective * view * model-rotation)
 .fvec params           ; x = fur length
 .fvec wind             ; xyz = tip bend (w = 0)
+.fvec lightdir         ; light direction in MODEL space (CPU rotates it so it stays camera-relative)
 
 .constf consts(0.0, 1.0, 0.3333333, 0.18)   ; x=0 ; y=1 ; z=1/3 ; w=hair half-width
-.constf consts2(0.55, 0.0, 0.0, 0.0)        ; x = ambient
-.constf lightdir(0.4082, 0.4082, 0.8165, 0.0)
-.alias  one     consts.yyyy
-.alias  third   consts.zzzz
-.alias  hwidth  consts.wwww
-.alias  ambient consts2.xxxx
+.constf consts2(0.28, 0.38, 0.0, 0.0)       ; x = ambient (low -> strong shadow) ; y = root darkening
+.alias  one      consts.yyyy
+.alias  third    consts.zzzz
+.alias  hwidth   consts.wwww
+.alias  ambient  consts2.xxxx
+.alias  rootshade consts2.yyyy
 
 .out outpos position
 .out outclr color
@@ -54,22 +55,23 @@
 
 	; diffuse shading term (uses the corrected normal)
 	dp3 r5, lightdir, r3      ; const src1
-	max r5, ambient, r5       ; r5 = max(N·L, ambient)
+	max r5, ambient, r5       ; r5 = lit = max(N·L, ambient)  -> tip brightness
+	mul r13, rootshade, r5    ; r13 = lit * rootShade          -> darkened roots/body (fake fur AO)
 
 	; --- (1) base surface triangle ---
 	setemit 0
 	mov r8, v0
-	mul r9, v1, r5
+	mul r9.xyz, v1, r13       ; dark (root/body)
 	call project_emit
 	emit
 	setemit 1
 	mov r8, v2
-	mul r9, v3, r5
+	mul r9.xyz, v3, r13       ; dark (body)
 	call project_emit
 	emit
 	setemit 2, prim
 	mov r8, v4
-	mul r9, v5, r5
+	mul r9.xyz, v5, r13       ; dark (body)
 	call project_emit
 	emit
 
@@ -81,17 +83,17 @@
 
 	setemit 0
 	add r8, r6, r10           ; base1 = centroid + offset
-	mul r9, v1, r5            ; root colour (shaded, darker)
+	mul r9.xyz, v1, r13       ; dark (root/body)            ; root colour (shaded, darker)
 	call project_emit
 	emit
 	setemit 1
 	add r8, r6, -r10          ; base2 = centroid - offset
-	mul r9, v1, r5
+	mul r9.xyz, v1, r13       ; dark (root/body)
 	call project_emit
 	emit
 	setemit 2, prim
 	mov r8, r7               ; tip
-	mov r9, v1               ; tip colour (full bright -> sheen)
+	mul r9.xyz, v1, r5       ; tip colour: fully lit -> bright vs dark roots (fur depth)
 	call project_emit
 	emit
 	end

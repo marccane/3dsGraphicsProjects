@@ -29,12 +29,12 @@ typedef struct { float position[3]; float color[4]; } vertex;
 #define MIN_SUBDIV 1
 
 static int     vtx_count = 0;
-static int     subdiv = 7;                       // current subdivision (= fur density)
+static int     subdiv = 40;                      // current subdivision (= fur density)
 static vertex* build_dst;                        // where push() writes during a rebuild
 
 static DVLB_s* program_dvlb;
 static shaderProgram_s program;
-static int uLoc_projection, uLoc_params, uLoc_wind;
+static int uLoc_projection, uLoc_params, uLoc_wind, uLoc_light;
 static C3D_Mtx projection;
 static void* vbo_data = NULL;                    // current GPU VBO (linear heap)
 static void* vbo_prev = NULL;                    // previous VBO, freed a rebuild later (GPU safety)
@@ -63,9 +63,13 @@ static void push(const float p[3])
 {
 	float inv = 1.0f / sqrtf(p[0]*p[0] + p[1]*p[1] + p[2]*p[2]);
 	float x = p[0]*inv, y = p[1]*inv, z = p[2]*inv;   // project onto unit sphere
-	float hue = atan2f(z, x) / (2.0f * M_PI) + 0.5f;   // vivid rainbow by longitude
+	// Brown fur with smooth tonal variation (dark brown <-> tan patches).
+	float n = 0.5f + 0.5f * sinf(x*7.3f + y*5.1f + z*6.7f); // [0,1]
+	float hue = 0.07f + 0.03f * n;          // ~25-36 deg: warm brown -> tan
+	float sat = 0.78f - 0.20f * n;          // darker patches a touch more saturated
+	float val = 0.34f + 0.34f * n;          // dark brown -> lighter tan
 	float r, g, b;
-	hsv(hue, 1.0f, 1.0f, &r, &g, &b);
+	hsv(hue, sat, val, &r, &g, &b);
 	build_dst[vtx_count++] = (vertex){ { x, y, z }, { r, g, b, 1.0f } };
 }
 
@@ -130,6 +134,7 @@ static void sceneInit(void)
 	uLoc_projection = shaderInstanceGetUniformLocation(program.geometryShader, "projection");
 	uLoc_params     = shaderInstanceGetUniformLocation(program.geometryShader, "params");
 	uLoc_wind       = shaderInstanceGetUniformLocation(program.geometryShader, "wind");
+	uLoc_light      = shaderInstanceGetUniformLocation(program.geometryShader, "lightdir");
 
 	C3D_AttrInfo* attrInfo = C3D_GetAttrInfo();
 	AttrInfo_Init(attrInfo);
@@ -159,9 +164,19 @@ static void sceneRender(float ax, float ay, float furLen, float windX, float win
 	C3D_Mtx mvp;
 	Mtx_Multiply(&mvp, &projection, &modelView);
 
+	// Camera-relative ("head") light: keep the lit hemisphere facing the camera.
+	// Lighting is done in MODEL space, so rotate a fixed view-space light into model
+	// space by R^T (R = the model's rotation). L_view points mostly toward the camera (+Z).
+	C3D_Mtx rt;
+	Mtx_Identity(&rt);
+	Mtx_RotateY(&rt, -ay, true);
+	Mtx_RotateX(&rt, -ax, true);            // rt = Ry(-ay)*Rx(-ax) = R^T
+	C3D_FVec lm = Mtx_MultiplyFVec4(&rt, FVec4_New(0.30f, 0.40f, 0.86f, 0.0f));
+
 	C3D_FVUnifMtx4x4(GPU_GEOMETRY_SHADER, uLoc_projection, &mvp);
 	C3D_FVUnifSet(GPU_GEOMETRY_SHADER, uLoc_params, furLen, 0.0f, 0.0f, 0.0f);
 	C3D_FVUnifSet(GPU_GEOMETRY_SHADER, uLoc_wind, windX, 0.0f, windZ, 0.0f);
+	C3D_FVUnifSet(GPU_GEOMETRY_SHADER, uLoc_light, lm.x, lm.y, lm.z, 0.0f);
 
 	C3D_DrawArrays(GPU_GEOMETRY_PRIM, 0, vtx_count);
 }
@@ -195,7 +210,7 @@ int main()
 
 	float ax = 0.0f, ay = 0.0f, tp = 0.0f, tw = 0.0f;
 	float furBase = 0.25f;     // D-pad adjustable
-	bool  windOn = false;
+	bool  windOn = true;
 
 	u64   fpsLast = osGetTime(); // ms
 	int   fpsFrames = 0;
