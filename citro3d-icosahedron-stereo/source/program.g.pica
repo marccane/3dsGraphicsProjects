@@ -1,0 +1,96 @@
+; Geometry shader — 3D "exploding solid".
+;
+; Receives one whole triangle (stride 6: v0..v5 = 3 verts x {pos,colour}).
+; Computes the face NORMAL via a cross product of two edges — this needs all
+; three vertices at once, so a vertex shader cannot do it — then pushes the
+; whole face outward along that normal by an animated `bloom` uniform, and
+; shades it with a simple normal·light term so the solid reads as 3D.
+.gsh point c0
+
+.fvec projection[4]   ; MVP (perspective * view * model-rotation), animated on CPU
+.fvec params          ; x = bloom ; y = alpha floor ; z = alpha gain ; w = random-mode flag
+
+.constf consts(0.0, 1.0, 0.65, 0.0)              ; x = 0 ; y = 1.0 ; z = ambient (kept high so colours stay vivid)
+.constf lightdir(0.4082, 0.4082, 0.8165, 0.0)    ; normalised light direction
+.alias  zero    consts.xxxx
+.alias  one     consts.yyyy
+.alias  ambient consts.zzzz
+
+.out outpos position
+.out outclr color
+
+.entry gmain
+.proc gmain
+	; edges (one input register per instruction, so copy v0 to a temp first)
+	mov r0, v0
+	add r1, v2, -r0           ; edge1 = v1 - v0
+	add r2, v4, -r0           ; edge2 = v2 - v0
+
+	; normal = cross(edge1, edge2) = e1.yzx*e2.zxy - e1.zxy*e2.yzx
+	mul r3, r1.yzxw, r2.zxyw
+	mul r4, r1.zxyw, r2.yzxw
+	add r3, r3, -r4           ; r3 = face normal (unnormalised)
+
+	; normalise
+	dp3 r5, r3, r3
+	rsq r5, r5
+	mul r3, r3, r5            ; r3 = unit face normal
+
+	; N·L (broadcast to all lanes)
+	dp3 r6, lightdir, r3      ; const must be src1
+
+	; RGB diffuse shading, floored at ambient (kept in BOTH modes)
+	max r5, ambient, r6       ; r5 = max(N·L, ambient)
+
+	; per-face ALPHA = clamp(floor + gain * vary, 0, 1)
+	;   vary = mix( max(N·L,0), randFace, params.w )
+	;     params.w = 0 -> light-based opacity (glass/solid)
+	;     params.w = 1 -> RANDOM per-face opacity (dynamic mode): random faces stay solid
+	;   randFace = per-face random seed carried in the incoming colour's alpha (v1.w)
+	;   params.y = floor, params.z = gain
+	max r4, zero, r6          ; r4 = ndl = max(N·L, 0)
+	add r10, v1.wwww, -r4     ; randFace - ndl   (input v1 + temp r4 = one input)
+	mul r10, params.wwww, r10 ; * modeFlag       (uniform src1)
+	add r4, r4, r10           ; vary = ndl + modeFlag*(randFace - ndl)
+	mul r4, params.zzzz, r4   ; * gain   (uniform src1)
+	add r4, params.yyyy, r4   ; + floor  (uniform src1)
+	min r4, one, r4           ; clamp to 1 (const src1)
+
+	; displacement = normal * bloom
+	mul r7, params.xxxx, r3   ; uniform must be src1
+
+	; --- emit the displaced, lit triangle ---
+	setemit 0
+	add r8.xyz, v0, r7
+	mov r8.w,   one
+	mul r9.xyz, v1, r5        ; rgb = colour * shading
+	mov r9.w,   r4            ; alpha = glass/solid term
+	call project_emit
+	emit
+
+	setemit 1
+	add r8.xyz, v2, r7
+	mov r8.w,   one
+	mul r9.xyz, v3, r5
+	mov r9.w,   r4
+	call project_emit
+	emit
+
+	setemit 2, prim
+	add r8.xyz, v4, r7
+	mov r8.w,   one
+	mul r9.xyz, v5, r5
+	mov r9.w,   r4
+	call project_emit
+	emit
+
+	end
+.end
+
+.proc project_emit
+	dp4 outpos.x, projection[0], r8
+	dp4 outpos.y, projection[1], r8
+	dp4 outpos.z, projection[2], r8
+	dp4 outpos.w, projection[3], r8
+	mov outclr, r9
+.end
