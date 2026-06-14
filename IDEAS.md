@@ -20,6 +20,7 @@ built in this folder.
 | `citro3d-fur/` | geometry | furry ball — each triangle sprouts a hair along its normal (1→2 tris), bristles + wind sway | ✅ done |
 | `citro3d-starfield-stereo/` | geometry | GPU particle **stereoscopic** starfield — each **point** sprouts a camera-facing glowing quad (1→4 tris); additive bloom, per-eye projection, stars at real depths | ✅ done |
 | `citro3d-shadow-stereo/` | fixed-function lighting | **hardware shadow mapping** (stereo) — 2-pass: torus rendered to a depth texture from the light's POV, then shadow compare in the lighting unit; orbiting light sweeps a real shadow on a floor | ✅ done |
+| `citro3d-shadow-explode-stereo/` | geometry + fixed-function lighting | **exploding icosahedron casting real shadows** (stereo) — GS caster renders the shards' depth from the light; the flat-shaded shards cast an animated shadow on a floor | ✅ done |
 | `GLASS-morph/` | vertex (GLASS/ES2) | triangle morphs between two shapes by a uniform | ✅ done |
 
 ---
@@ -196,8 +197,12 @@ of them** (see A.5, which supersedes the best-effort ⚠️/❌ tags above for t
    `view`**, and the TEV **adds** `GPU_FRAGMENT_PRIMARY_COLOR` (diffuse+ambient) + `GPU_FRAGMENT_SECONDARY_COLOR`
    (specular). Material is `{ambient, diffuse, specular0, specular1, emission}`.
 2. **Shadow mapping** — real **two-pass hardware** shadow mapping (the genuinely-cool one). ✅ **Built**
-   (`citro3d-shadow-stereo`: orbiting light, torus self-shadowing + casting onto a floor, tunable bias,
-   stereo) — based on `/opt/devkitpro/examples/3ds/graphics/gpu/shadow_mapping`: **pass 1** renders the caster from the light's
+   twice: `citro3d-shadow-stereo` (orbiting light, torus self-shadowing + casting onto a floor, tunable
+   bias, stereo) and `citro3d-shadow-explode-stereo` (**the exploding icosahedron casting real shadows** —
+   a geometry-shader *caster* renders the displaced shards' depth from the light, so the flat-shaded
+   shards throw an animated shadow on the floor; the GS only outputs position/colour, so the unverified
+   "GS → fragment-lighting" path is sidestepped — only the floor uses the lighting unit). Based on
+   `/opt/devkitpro/examples/3ds/graphics/gpu/shadow_mapping`: **pass 1** renders the caster from the light's
    POV into a **depth texture** (`C3D_TexInitShadow(&tex,512,512)` + `C3D_RenderTargetCreateFromTex(&tex,
    GPU_TEXFACE_2D, 0, GPU_RB_DEPTH16)`, light uses an ortho `Mtx_LookAt`/`Mtx_Ortho`); **pass 2** renders
    from the camera with the shadow compare done **in the lighting unit** (`C3D_LightShadowEnable`,

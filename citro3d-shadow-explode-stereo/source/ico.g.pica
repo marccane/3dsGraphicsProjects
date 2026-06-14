@@ -1,0 +1,72 @@
+; Geometry shader — exploding icosahedron, CAMERA pass (pass 2).
+;
+; Same explosion as the original citro3d-icosahedron demo: compute the per-face
+; normal via a cross product, push the face out by `bloom`, and shade it flat by
+; max(N·L, ambient). Two differences from the original:
+;   * `lightdir` is a UNIFORM (model-space) the CPU updates each frame so the
+;     shading tracks the same orbiting light that casts the shadow.
+;   * faces are OPAQUE (alpha = 1) — no glass here.
+; The icosahedron renders with its own flat shading; it does NOT sample the
+; shadow map (only the floor receives shadows), so this GS only ever outputs
+; position + colour — no fragment-lighting semantics.
+.gsh point c0
+
+.fvec projection[4]   ; camera MVP = proj * view * model
+.fvec lightdir        ; light direction in MODEL space (CPU rotates it per frame)
+.fvec params          ; x = bloom
+
+.constf consts(0.0, 1.0, 0.32, 0.0)   ; z = ambient floor (keeps shadowed faces coloured)
+.alias  one     consts.yyyy
+.alias  ambient consts.zzzz
+
+.out outpos position
+.out outclr color
+
+.entry gmain
+.proc gmain
+	mov r0, v0
+	add r1, v2, -r0
+	add r2, v4, -r0
+	mul r3, r1.yzxw, r2.zxyw
+	mul r4, r1.zxyw, r2.yzxw
+	add r3, r3, -r4          ; face normal (unnormalised)
+	dp3 r5, r3, r3
+	rsq r5, r5
+	mul r3, r3, r5           ; unit face normal
+
+	dp3 r6, lightdir, r3     ; N·L   (uniform src1)
+	max r5, ambient, r6      ; lit = max(N·L, ambient)
+
+	mul r7, params.xxxx, r3  ; displacement = normal * bloom
+
+	setemit 0
+	add r8.xyz, v0, r7
+	mov r8.w, one
+	mul r9.xyz, v1, r5       ; rgb = colour * shading
+	mov r9.w, one            ; opaque
+	call project_emit
+	emit
+	setemit 1
+	add r8.xyz, v2, r7
+	mov r8.w, one
+	mul r9.xyz, v3, r5
+	mov r9.w, one
+	call project_emit
+	emit
+	setemit 2, prim
+	add r8.xyz, v4, r7
+	mov r8.w, one
+	mul r9.xyz, v5, r5
+	mov r9.w, one
+	call project_emit
+	emit
+	end
+.end
+
+.proc project_emit
+	dp4 outpos.x, projection[0], r8
+	dp4 outpos.y, projection[1], r8
+	dp4 outpos.z, projection[2], r8
+	dp4 outpos.w, projection[3], r8
+	mov outclr, r9
+.end

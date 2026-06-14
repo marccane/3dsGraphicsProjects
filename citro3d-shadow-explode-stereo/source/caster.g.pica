@@ -1,0 +1,66 @@
+; Geometry shader — SHADOW CASTER for the exploding icosahedron.
+;
+; Runs in PASS 1, rendering from the light's point of view into the shadow map.
+; It performs the SAME explosion as the camera-pass shader (ico.g.pica) — compute
+; the face normal (cross product) and push the face out by `bloom` in MODEL space
+; — then projects into the light's clip space with `lightmvp` (= light_viewproj *
+; model). Because both passes explode identically, the shadow matches the flying
+; shards exactly. Outputs position (-> depth) + a depth-encoded colour, mirroring
+; the stock devkitPro shadow_caster.
+.gsh point c0
+
+.fvec lightmvp[4]    ; light_viewproj * model  (model-space displaced vertex -> light clip)
+.fvec params         ; x = bloom
+
+.constf consts(0.0, 1.0, 0.5, 0.0)
+.alias  one  consts.yyyy
+.alias  half consts.zzzz
+
+.out outpos position
+.out outclr color
+
+.entry gmain
+.proc gmain
+	; edges + face normal (model space) — one input register per instruction
+	mov r0, v0
+	add r1, v2, -r0          ; edge1 = v1 - v0
+	add r2, v4, -r0          ; edge2 = v2 - v0
+	mul r3, r1.yzxw, r2.zxyw
+	mul r4, r1.zxyw, r2.yzxw
+	add r3, r3, -r4          ; face normal (unnormalised)
+	dp3 r5, r3, r3
+	rsq r5, r5
+	mul r3, r3, r5           ; unit model-space face normal
+
+	mul r7, params.xxxx, r3  ; displacement = normal * bloom  (uniform src1)
+
+	setemit 0
+	add r8.xyz, v0, r7
+	mov r8.w, one
+	call caster_emit
+	emit
+	setemit 1
+	add r8.xyz, v2, r7
+	mov r8.w, one
+	call caster_emit
+	emit
+	setemit 2, prim
+	add r8.xyz, v4, r7
+	mov r8.w, one
+	call caster_emit
+	emit
+	end
+.end
+
+.proc caster_emit
+	dp4 r5.x, lightmvp[0], r8
+	dp4 r5.y, lightmvp[1], r8
+	dp4 r5.z, lightmvp[2], r8
+	dp4 r5.w, lightmvp[3], r8
+	mov outpos, r5
+	; outclr = (z / w) * 0.5 + 0.5   (depth encoding, like the stock caster)
+	rcp r5.w, r5.w
+	mul r5.z, r5.z, r5.w
+	mov r6, half
+	mad outclr, r5.z, r6, r6
+.end
