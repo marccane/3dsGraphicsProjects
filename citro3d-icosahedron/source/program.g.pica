@@ -1,0 +1,76 @@
+; Geometry shader — 3D "exploding solid".
+;
+; Receives one whole triangle (stride 6: v0..v5 = 3 verts x {pos,colour}).
+; Computes the face NORMAL via a cross product of two edges — this needs all
+; three vertices at once, so a vertex shader cannot do it — then pushes the
+; whole face outward along that normal by an animated `bloom` uniform, and
+; shades it with a simple normal·light term so the solid reads as 3D.
+.gsh point c0
+
+.fvec projection[4]   ; MVP (perspective * view * model-rotation), animated on CPU
+.fvec params          ; params.x = bloom (explode amount)
+
+.constf consts(0.0, 1.0, 0.35, 0.0)              ; y = 1.0 ; z = ambient
+.constf lightdir(0.4082, 0.4082, 0.8165, 0.0)    ; normalised light direction
+.alias  one     consts.yyyy
+.alias  ambient consts.zzzz
+
+.out outpos position
+.out outclr color
+
+.entry gmain
+.proc gmain
+	; edges (one input register per instruction, so copy v0 to a temp first)
+	mov r0, v0
+	add r1, v2, -r0           ; edge1 = v1 - v0
+	add r2, v4, -r0           ; edge2 = v2 - v0
+
+	; normal = cross(edge1, edge2) = e1.yzx*e2.zxy - e1.zxy*e2.yzx
+	mul r3, r1.yzxw, r2.zxyw
+	mul r4, r1.zxyw, r2.yzxw
+	add r3, r3, -r4           ; r3 = face normal (unnormalised)
+
+	; normalise
+	dp3 r5, r3, r3
+	rsq r5, r5
+	mul r3, r3, r5            ; r3 = unit face normal
+
+	; diffuse lighting term, clamped to ambient
+	dp3 r6, lightdir, r3      ; const must be src1
+	max r6, ambient, r6       ; lit = max(N·L, ambient)
+
+	; displacement = normal * bloom
+	mul r7, params.xxxx, r3   ; uniform must be src1
+
+	; --- emit the displaced, lit triangle ---
+	setemit 0
+	add r8.xyz, v0, r7
+	mov r8.w,   one
+	mul r9,     v1, r6
+	call project_emit
+	emit
+
+	setemit 1
+	add r8.xyz, v2, r7
+	mov r8.w,   one
+	mul r9,     v3, r6
+	call project_emit
+	emit
+
+	setemit 2, prim
+	add r8.xyz, v4, r7
+	mov r8.w,   one
+	mul r9,     v5, r6
+	call project_emit
+	emit
+
+	end
+.end
+
+.proc project_emit
+	dp4 outpos.x, projection[0], r8
+	dp4 outpos.y, projection[1], r8
+	dp4 outpos.z, projection[2], r8
+	dp4 outpos.w, projection[3], r8
+	mov outclr, r9
+.end

@@ -1,0 +1,38 @@
+; Vertex shader — CUBE <-> SPHERE morph (pure vertex-stage effect).
+;
+;   sphere = normalize(pos)                         (pos / |pos|, via rsq)
+;   morphed = pos + t * (sphere - pos)              (lerp, t = params.x)
+;   outpos  = MVP * morphed
+;
+; A subdivided cube fed in as `pos` smoothly inflates into a sphere and back as
+; the CPU animates t. Each vertex is independent — no geometry shader needed.
+.fvec projection[4]
+.fvec params              ; params.x = morph t in [0,1]
+
+.constf myconst(0.0, 1.0, -1.0, 0.0)
+.alias  ones myconst.yyyy
+
+.out outpos position
+.out outclr color
+
+.alias inpos v0
+.alias inclr v1
+
+.proc main
+	mov r0, inpos             ; r0 = cube position
+	dp3 r1, r0, r0            ; |pos|^2  (broadcast to all lanes)
+	rsq r1, r1                ; 1/|pos|
+	mul r2, r0, r1            ; r2 = sphere = normalize(pos)
+	add r3, r2, -r0           ; r3 = sphere - pos
+	mul r3, params.xxxx, r3   ; r3 = t * (sphere - pos)   (uniform must be src1)
+	add r0, r0, r3            ; r0 = morphed position
+	mov r0.w, ones
+
+	dp4 outpos.x, projection[0], r0
+	dp4 outpos.y, projection[1], r0
+	dp4 outpos.z, projection[2], r0
+	dp4 outpos.w, projection[3], r0
+
+	mov outclr, inclr
+	end
+.end
