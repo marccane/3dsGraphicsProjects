@@ -361,7 +361,7 @@ int main()
 		if (bias < 0.0f)  bias = 0.0f;
 		if (bias > 0.05f) bias = 0.05f;
 
-		if (!paused) { ax += 0.011f; ay += 0.017f; tt += 0.028f; lightT += 0.013f; }
+		if (!paused) { ax += 0.011f; ay += 0.017f; tt += 0.028f; lightT += 0.006f; }
 		float bloom = 0.5f + 0.5f * sinf(tt);   // closed (0) <-> blown apart (1)
 
 		updateFrame(ax, ay, bloom, lightT);

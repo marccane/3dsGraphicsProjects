@@ -15,7 +15,7 @@
 .fvec lightdir        ; light direction in MODEL space (CPU rotates it per frame)
 .fvec params          ; x = bloom
 
-.constf consts(0.0, 1.0, 0.32, 0.0)   ; z = ambient floor (keeps shadowed faces coloured)
+.constf consts(0.0, 1.0, 0.5, 0.0)    ; z = ambient floor (raised: softer lit/unlit contrast as it tumbles)
 .alias  one     consts.yyyy
 .alias  ambient consts.zzzz
 
