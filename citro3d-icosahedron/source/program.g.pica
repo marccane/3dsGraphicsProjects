@@ -8,10 +8,11 @@
 .gsh point c0
 
 .fvec projection[4]   ; MVP (perspective * view * model-rotation), animated on CPU
-.fvec params          ; params.x = bloom (explode amount)
+.fvec params          ; x = bloom (explode) ; y = alpha floor ; z = alpha gain
 
-.constf consts(0.0, 1.0, 0.35, 0.0)              ; y = 1.0 ; z = ambient
+.constf consts(0.0, 1.0, 0.35, 0.0)              ; x = 0 ; y = 1.0 ; z = ambient
 .constf lightdir(0.4082, 0.4082, 0.8165, 0.0)    ; normalised light direction
+.alias  zero    consts.xxxx
 .alias  one     consts.yyyy
 .alias  ambient consts.zzzz
 
@@ -35,9 +36,18 @@
 	rsq r5, r5
 	mul r3, r3, r5            ; r3 = unit face normal
 
-	; diffuse lighting term, clamped to ambient
+	; N·L (broadcast to all lanes)
 	dp3 r6, lightdir, r3      ; const must be src1
-	max r6, ambient, r6       ; lit = max(N·L, ambient)
+
+	; RGB diffuse shading, floored at ambient (kept in BOTH modes)
+	max r5, ambient, r6       ; r5 = max(N·L, ambient)
+
+	; per-face ALPHA = clamp(floor + gain * max(N·L, 0), 0, 1)
+	;   params.y = floor, params.z = gain  (CPU picks them per mode: glass vs solid)
+	max r4, zero, r6          ; r4 = max(N·L, 0)
+	mul r4, params.zzzz, r4   ; * gain   (uniform src1)
+	add r4, params.yyyy, r4   ; + floor  (uniform src1)
+	min r4, one, r4           ; clamp to 1 (const src1)
 
 	; displacement = normal * bloom
 	mul r7, params.xxxx, r3   ; uniform must be src1
@@ -46,21 +56,24 @@
 	setemit 0
 	add r8.xyz, v0, r7
 	mov r8.w,   one
-	mul r9,     v1, r6
+	mul r9.xyz, v1, r5        ; rgb = colour * shading
+	mov r9.w,   r4            ; alpha = glass/solid term
 	call project_emit
 	emit
 
 	setemit 1
 	add r8.xyz, v2, r7
 	mov r8.w,   one
-	mul r9,     v3, r6
+	mul r9.xyz, v3, r5
+	mov r9.w,   r4
 	call project_emit
 	emit
 
 	setemit 2, prim
 	add r8.xyz, v4, r7
 	mov r8.w,   one
-	mul r9,     v5, r6
+	mul r9.xyz, v5, r5
+	mov r9.w,   r4
 	call project_emit
 	emit
 

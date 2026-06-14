@@ -3,10 +3,17 @@
 // A 20-face icosahedron tumbles in 3D. The geometry shader computes each face's
 // normal (cross product of two edges — needs the whole triangle) and flies the
 // face out along that normal by an animated `bloom`, so the solid blows apart
-// into 20 rigid shards and reassembles. Press START to quit.
+// into 20 rigid shards and reassembles.
+//
+// Controls (shown on the bottom screen):
+//   B = toggle glass / solid   Y = toggle dynamic (opacity synced to the blast)
+//   D-pad L/R = tune glass opacity   START = quit
+// The glass look is a deliberate per-face alpha = clamp(floor + gain*max(N.L,0), 0, 1):
+// faces toward the light stay opaque, faces angled away become translucent.
 #include <3ds.h>
 #include <citro3d.h>
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 #include "program_shbin.h"
 
@@ -95,11 +102,16 @@ static void sceneInit(void)
 	C3D_TexEnvSrc(env, C3D_Both, GPU_PRIMARY_COLOR, 0, 0);
 	C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
 
+	// Standard alpha blending so the per-face alpha (our "glass" term) reads as translucency.
+	C3D_AlphaBlend(GPU_BLEND_ADD, GPU_BLEND_ADD,
+	               GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA,
+	               GPU_SRC_ALPHA, GPU_ONE_MINUS_SRC_ALPHA);
+
 	C3D_DepthTest(true, GPU_GREATER, GPU_WRITE_ALL); // PICA convention: depth clears to 0, nearer = greater
 	C3D_CullFace(GPU_CULL_NONE);                  // shards expose their back faces
 }
 
-static void sceneRender(float ax, float ay, float bloom)
+static void sceneRender(float ax, float ay, float bloom, float aFloor, float aGain)
 {
 	C3D_Mtx modelView;
 	Mtx_PerspTilt(&projection, C3D_AngleFromDegrees(45.0f), C3D_AspectRatioTop, 0.01f, 1000.0f, false);
@@ -112,7 +124,8 @@ static void sceneRender(float ax, float ay, float bloom)
 	Mtx_Multiply(&mvp, &projection, &modelView);
 
 	C3D_FVUnifMtx4x4(GPU_GEOMETRY_SHADER, uLoc_projection, &mvp);
-	C3D_FVUnifSet(GPU_GEOMETRY_SHADER, uLoc_params, bloom, 0.0f, 0.0f, 0.0f);
+	// params: x = bloom, y = alpha floor, z = alpha gain
+	C3D_FVUnifSet(GPU_GEOMETRY_SHADER, uLoc_params, bloom, aFloor, aGain, 0.0f);
 
 	C3D_DrawArrays(GPU_GEOMETRY_PRIM, 0, VTX_COUNT);
 }
@@ -127,6 +140,7 @@ static void sceneExit(void)
 int main()
 {
 	gfxInitDefault();
+	consoleInit(GFX_BOTTOM, NULL);            // text console on the bottom screen
 	C3D_Init(C3D_DEFAULT_CMDBUF_SIZE);
 
 	C3D_RenderTarget* target = C3D_RenderTargetCreate(240, 400, GPU_RB_RGBA8, GPU_RB_DEPTH24_STENCIL8);
@@ -134,22 +148,65 @@ int main()
 
 	sceneInit();
 
+	// Static controls text (bottom screen). Dynamic status is printed in the loop.
+	printf("\x1b[2;2H=== Exploding Icosahedron ===");
+	printf("\x1b[3;7Hgeometry-shader glass demo");
+	printf("\x1b[6;2HControls:");
+	printf("\x1b[7;4HB          toggle GLASS / SOLID");
+	printf("\x1b[8;4HY          toggle DYNAMIC opacity");
+	printf("\x1b[9;4HD-pad < >  tune glass opacity");
+	printf("\x1b[10;4HSTART      quit");
+
 	float ax = 0.0f, ay = 0.0f, tt = 0.0f;
+	bool  solid = false;       // B toggles glass <-> solid
+	bool  dynamic = false;     // Y toggles auto-opacity synced to the explosion
+	float glassFloor = 0.22f;  // minimum opacity in glass mode (D-pad L/R tunes it live)
+
 	while (aptMainLoop())
 	{
 		hidScanInput();
-		if (hidKeysDown() & KEY_START)
+		u32 kDown = hidKeysDown();
+		u32 kHeld = hidKeysHeld();
+		if (kDown & KEY_START)
 			break;
+		if (kDown & KEY_B)
+			solid = !solid;                       // toggle glass / solid
+		if (kDown & KEY_Y)
+			dynamic = !dynamic;                   // toggle dynamic (synced) opacity
+		if (kHeld & KEY_DLEFT)  glassFloor -= 0.01f; // more transparent
+		if (kHeld & KEY_DRIGHT) glassFloor += 0.01f; // more opaque
+		if (glassFloor < 0.0f)  glassFloor = 0.0f;
+		if (glassFloor > 0.95f) glassFloor = 0.95f;
 
 		ax += 0.011f;
 		ay += 0.017f;            // different rates -> tumbling
 		tt += 0.028f;
 		float bloom = 0.5f + 0.5f * sinf(tt); // closed (0) <-> blown apart (1)
 
+		// alpha = clamp(floor + gain * max(N·L,0), 0, 1)
+		float aFloor, aGain;
+		const char* modeStr;
+		if (dynamic) {
+			// Sync opacity to the blast: assembled = near-solid, blown apart = ghostly.
+			aFloor = 0.90f - 0.80f * bloom;       // bloom 0 -> 0.90, bloom 1 -> 0.10
+			aGain  = 1.0f - aFloor;
+			modeStr = "DYNAMIC (synced)";
+		} else if (solid) {
+			aFloor = 1.0f; aGain = 0.0f;
+			modeStr = "SOLID";
+		} else {
+			aFloor = glassFloor; aGain = 1.0f - glassFloor;
+			modeStr = "GLASS";
+		}
+
+		// Live status on the bottom screen (trailing spaces clear leftovers).
+		printf("\x1b[13;2HMode    : %-18s", modeStr);
+		printf("\x1b[14;2HOpacity : %.2f   ", aFloor);
+
 		C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
 			C3D_RenderTargetClear(target, C3D_CLEAR_ALL, CLEAR_COLOR, 0);
 			C3D_FrameDrawOn(target);
-			sceneRender(ax, ay, bloom);
+			sceneRender(ax, ay, bloom, aFloor, aGain);
 		C3D_FrameEnd(0);
 	}
 
