@@ -22,7 +22,7 @@ DATA		:=	data
 INCLUDES	:=	include
 
 #---------------------------------------------------------------------------------
-# picaGL lives one directory up (has include/ and lib/)
+# picaGL lives in 8-opengl/ (has include/ and lib/); absolute path so this builds from anywhere
 #---------------------------------------------------------------------------------
 PICAGL		:=	/home/markus/projects/1-3DS/8-opengl/picaGL
 

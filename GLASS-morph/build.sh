@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build the GLASS (OpenGL ES 2) vertex-morph showcase into a .3dsx.
 # Reuses the already-built forked libctru + GLASS/KYGX/RIP artifacts under
-# ../../GLASS/Build and ../../.cpm-cache (see ../../3ds-opengl-landscape.md §5).
+# 8-opengl/GLASS/Build and 8-opengl/.cpm-cache (see ../8-opengl/3ds-opengl-landscape.md §5).
+# All paths below are absolute (ROOT), so this builds fine from any location.
 set -euo pipefail
 
 export PATH="$PATH:/opt/devkitpro/devkitARM/bin:/opt/devkitpro/tools/bin"

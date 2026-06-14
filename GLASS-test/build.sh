@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Build the GLASS (OpenGL ES 2) RGB-triangle test into a .3dsx.
 #
-# Prereqs (already done once in this folder; see ../3ds-opengl-landscape.md §5):
-#   1. The forked libctru is built  ->  ../ctrulib_for_GLASS/libctru
-#   2. GLASS is configured+built    ->  ../GLASS/Build  (CPM fetched KYGX/RIP into ../.cpm-cache)
+# Prereqs (already done once; see ../8-opengl/3ds-opengl-landscape.md §5):
+#   1. The forked libctru is built  ->  8-opengl/ctrulib_for_GLASS/libctru
+#   2. GLASS is configured+built    ->  8-opengl/GLASS/Build  (CPM fetched KYGX/RIP into 8-opengl/.cpm-cache)
+# All paths below are absolute (ROOT), so this builds fine from any location.
 # This script only rebuilds the test program against those artifacts.
 set -euo pipefail
 
