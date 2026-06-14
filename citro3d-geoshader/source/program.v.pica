@@ -1,0 +1,18 @@
+; Vertex shader — pure passthrough into the geometry shader.
+; Real work (centroid + explode + projection) happens in program.g.pica.
+.constf myconst(0.0, 1.0, -1.0, -0.5)
+.alias  ones myconst.yyyy
+
+.out outpos position
+.out outclr color
+
+.alias inpos v0
+.alias inclr v1
+
+.entry vmain
+.proc vmain
+	mov outpos.xyz, inpos      ; model-space position (centered on origin)
+	mov outpos.w,   ones
+	mov outclr,     inclr
+	end
+.end

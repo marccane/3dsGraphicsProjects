@@ -1,0 +1,68 @@
+; Geometry shader — the star of the demo.
+;
+; Receives one whole triangle at a time (stride 6: v0..v5 = 3 vertices, each a
+; position + colour). It computes the triangle's CENTROID — which requires all
+; three vertices at once and is therefore IMPOSSIBLE in a vertex shader — and
+; pushes the whole triangle outward along that centroid direction by an animated
+; `bloom` uniform. Result: every spike of the pinwheel flies out and back as one
+; rigid piece (a per-primitive "explode" effect).
+.gsh point c0
+
+; Uniforms
+.fvec projection[4]   ; MVP (animated rotation, on CPU)
+.fvec params          ; params.x = bloom amount
+
+; Constants
+.constf myconst(0.0, 1.0, 0.333333343, 0.0)
+.alias  one   myconst.yyyy
+.alias  third myconst.zzzz
+
+.out outpos position
+.out outclr color
+
+; Inputs: v0/v1 = vtx0 pos/clr, v2/v3 = vtx1 pos/clr, v4/v5 = vtx2 pos/clr
+.entry gmain
+.proc gmain
+	; centroid = (v0 + v2 + v4) / 3
+	; (a PICA instruction may read only ONE input register, so accumulate via a temp)
+	mov r4, v0
+	add r4, v2, r4
+	add r4, v4, r4
+	mul r4, third, r4          ; r4 = centroid (xyz); r4.w = 1  (const must be src1)
+
+	; displacement = centroid * bloom   (only .xyz is used downstream)
+	mul r5, params.xxxx, r4    ; uniform must be src1
+
+	; --- emit the (displaced) triangle ---
+	setemit 0
+	add r8.xyz, v0, r5
+	mov r8.w,   one
+	mov r9,     v1
+	call project_emit
+	emit
+
+	setemit 1
+	add r8.xyz, v2, r5
+	mov r8.w,   one
+	mov r9,     v3
+	call project_emit
+	emit
+
+	setemit 2, prim
+	add r8.xyz, v4, r5
+	mov r8.w,   one
+	mov r9,     v5
+	call project_emit
+	emit
+
+	end
+.end
+
+; Project r8 (world position) by the MVP and pass colour r9 through.
+.proc project_emit
+	dp4 outpos.x, projection[0], r8
+	dp4 outpos.y, projection[1], r8
+	dp4 outpos.z, projection[2], r8
+	dp4 outpos.w, projection[3], r8
+	mov outclr, r9
+.end
