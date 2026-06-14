@@ -23,19 +23,21 @@
 
 typedef struct { float position[3]; float color[4]; } vertex;
 
+// No fixed cap: the VBO is (re)allocated to fit the current subdivision and grows
+// until linearAlloc runs out (then it simply stops climbing). Limits are linear
+// memory and — long before that — geometry-shader throughput.
 #define MIN_SUBDIV 1
-#define MAX_SUBDIV 16                          // cells per cube-face edge (D-pad L/R)
-#define MAX_VTX  (6 * MAX_SUBDIV * MAX_SUBDIV * 6) // 6 faces * cells * 6 verts/cell
 
-static vertex vertex_list[MAX_VTX];
-static int    vtx_count = 0;
-static int    subdiv = 7;                       // current subdivision (= fur density)
+static int     vtx_count = 0;
+static int     subdiv = 7;                       // current subdivision (= fur density)
+static vertex* build_dst;                        // where push() writes during a rebuild
 
 static DVLB_s* program_dvlb;
 static shaderProgram_s program;
 static int uLoc_projection, uLoc_params, uLoc_wind;
 static C3D_Mtx projection;
-static void* vbo_data;
+static void* vbo_data = NULL;                    // current GPU VBO (linear heap)
+static void* vbo_prev = NULL;                    // previous VBO, freed a rebuild later (GPU safety)
 
 static void hsv(float h, float s, float v, float* r, float* g, float* b)
 {
@@ -64,7 +66,7 @@ static void push(const float p[3])
 	float hue = atan2f(z, x) / (2.0f * M_PI) + 0.5f;   // vivid rainbow by longitude
 	float r, g, b;
 	hsv(hue, 1.0f, 1.0f, &r, &g, &b);
-	vertex_list[vtx_count++] = (vertex){ { x, y, z }, { r, g, b, 1.0f } };
+	build_dst[vtx_count++] = (vertex){ { x, y, z }, { r, g, b, 1.0f } };
 }
 
 static void buildFurBall(void)
@@ -90,13 +92,31 @@ static void buildFurBall(void)
 	}
 }
 
-// Rebuild the sphere at the current `subdiv` and re-upload it to the GPU VBO.
-// (CPU writes to linear memory must be flushed before the GPU reads them.)
-static void rebuildGeometry(void)
+// Rebuild the sphere at the current `subdiv` into a freshly-sized linear VBO and
+// point the GPU at it. Returns false if linear memory is exhausted (caller reverts).
+// The old buffer is freed one rebuild later, by which time the GPU is long done.
+static bool rebuildGeometry(void)
 {
-	buildFurBall();
-	memcpy(vbo_data, vertex_list, sizeof(vertex) * vtx_count);
-	GSPGPU_FlushDataCache(vbo_data, sizeof(vertex) * vtx_count);
+	int needed = 6 * subdiv * subdiv * 6;
+	size_t bytes = (size_t)needed * sizeof(vertex);
+
+	vertex* nb = (vertex*)linearAlloc(bytes);
+	if (!nb)
+		return false;                 // out of linear memory — keep the current sphere
+
+	build_dst = nb;
+	buildFurBall();                   // fills nb, sets vtx_count
+	GSPGPU_FlushDataCache(nb, bytes); // CPU writes -> visible to the GPU
+
+	if (vbo_prev) linearFree(vbo_prev); // free the buffer from two rebuilds ago (GPU idle)
+	vbo_prev = vbo_data;               // defer freeing the just-active buffer
+	vbo_data = nb;
+
+	// Repoint the vertex buffer at the new allocation.
+	C3D_BufInfo* bufInfo = C3D_GetBufInfo();
+	BufInfo_Init(bufInfo);
+	BufInfo_Add(bufInfo, vbo_data, sizeof(vertex), 2, 0x10);
+	return true;
 }
 
 static void sceneInit(void)
@@ -116,12 +136,7 @@ static void sceneInit(void)
 	AttrInfo_AddLoader(attrInfo, 0, GPU_FLOAT, 3); // v0 = position
 	AttrInfo_AddLoader(attrInfo, 1, GPU_FLOAT, 4); // v1 = colour
 
-	vbo_data = linearAlloc(sizeof(vertex) * MAX_VTX); // max-sized; refilled when subdiv changes
-	rebuildGeometry();
-
-	C3D_BufInfo* bufInfo = C3D_GetBufInfo();
-	BufInfo_Init(bufInfo);
-	BufInfo_Add(bufInfo, vbo_data, sizeof(vertex), 2, 0x10);
+	rebuildGeometry();   // allocates the VBO at the current subdivision and sets BufInfo
 
 	C3D_TexEnv* env = C3D_GetTexEnv(0);
 	C3D_TexEnvInit(env);
@@ -153,7 +168,8 @@ static void sceneRender(float ax, float ay, float furLen, float windX, float win
 
 static void sceneExit(void)
 {
-	linearFree(vbo_data);
+	if (vbo_data) linearFree(vbo_data);
+	if (vbo_prev) linearFree(vbo_prev);
 	shaderProgramFree(&program);
 	DVLB_Free(program_dvlb);
 }
@@ -194,8 +210,9 @@ int main()
 		if (furBase > 0.6f)  furBase = 0.6f;
 
 		// D-pad left/right: fewer/more subdivisions -> fewer/more hairs (rebuild the sphere).
-		if ((kDown & KEY_DRIGHT) && subdiv < MAX_SUBDIV) { subdiv++; rebuildGeometry(); }
-		if ((kDown & KEY_DLEFT)  && subdiv > MIN_SUBDIV) { subdiv--; rebuildGeometry(); }
+		// No upper cap: if the VBO no longer fits in linear memory, revert the step.
+		if (kDown & KEY_DRIGHT) { subdiv++; if (!rebuildGeometry()) subdiv--; }
+		if ((kDown & KEY_DLEFT) && subdiv > MIN_SUBDIV) { subdiv--; rebuildGeometry(); }
 
 		ax += 0.008f;
 		ay += 0.013f;

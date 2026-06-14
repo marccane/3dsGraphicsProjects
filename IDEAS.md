@@ -32,8 +32,8 @@ The geometry stage uniquely sees a *whole primitive* and can *emit more* geometr
   (`citro3d-geoshader`).*
 - **Fur / spikes / fins** — each triangle emits itself **plus** a tapered hair along its normal, so the
   shape grows fur; animate hair length + a wind vector. ✅ *Built (`citro3d-fur`): 1 input tri → base
-  surface tri + hair spike; bristles and sways; **live D-pad subdivision** (1→16) spawns more/fewer hairs
-  by regenerating the sphere + re-uploading the VBO.*
+  surface tri + hair spike; bristles and sways; **live, uncapped D-pad subdivision** spawns more/fewer
+  hairs by reallocating + regenerating the sphere VBO (grows until linear memory runs out).*
 - **Instant wireframe / neon outline** — emit each triangle's 3 edges as thin quads (PICA lines have no
   width); pair with additive blending for a glowing wireframe, or animate an edge "scan."
 - **Tumbling debris field** — like the explode, but give each shard its **own** rotation from a
