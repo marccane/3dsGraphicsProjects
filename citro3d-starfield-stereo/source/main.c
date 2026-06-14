@@ -192,7 +192,7 @@ int main()
 	printf("\x1b[11;4HSTART       quit");
 
 	float ax = 0.30f, ay = 0.0f, tt = 0.0f;
-	float sizeBase = 0.07f;     // global billboard scale (D-pad U/D)
+	float sizeBase = 0.025f;    // global billboard scale (D-pad U/D)
 	bool  autospin = true;
 
 	u64 lastT = osGetTime();
