@@ -1,0 +1,19 @@
+; Vertex shader — passthrough into the geometry shader.
+;
+; Each input vertex is one STAR. We carry the model-space position in outpos.xyz
+; and smuggle the per-star SIZE in outpos.w: the geometry shader reads v0.w as
+; the size and re-projects every emitted corner with its own MVP (forcing w=1),
+; so this "position" never needs to be a valid clip coordinate. The star colour
+; (rgb) and per-star brightness (a) ride through in outclr.
+.out outpos position
+.out outclr color
+
+.alias inpos v0     ; xyz = position, w = size
+.alias inclr v1     ; rgb = colour,   a = brightness
+
+.entry vmain
+.proc vmain
+	mov outpos, inpos
+	mov outclr, inclr
+	end
+.end

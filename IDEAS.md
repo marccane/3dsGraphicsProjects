@@ -16,8 +16,11 @@ built in this folder.
 |---|---|---|---|
 | `citro3d-geoshader/` | geometry | 2D rainbow pinwheel; explode each spike along its primitive **centroid** | ✅ done |
 | `citro3d-icosahedron/` | geometry | 3D solid blown apart along per-face **normals** (cross product) + lit + glass/dynamic opacity | ✅ done |
+| `citro3d-icosahedron-stereo/` | geometry | the exploding icosahedron in **stereoscopic 3D** — per-eye off-axis projection, 3D slider drives pop-out | ✅ done |
 | `citro3d-cubesphere/` | vertex | subdivided cube ↔ sphere morph via `normalize(pos)` (`rsq`) | ✅ done |
 | `citro3d-fur/` | geometry | furry ball — each triangle sprouts a hair along its normal (1→2 tris), bristles + wind sway | ✅ done |
+| `citro3d-starfield/` | geometry | GPU particle starfield — each **point** sprouts a camera-facing glowing quad (1→4 tris), additive bloom | ✅ done |
+| `citro3d-starfield-stereo/` | geometry | the particle starfield in **stereoscopic 3D** — per-eye projection, stars at real depths | ✅ done |
 | `GLASS-morph/` | vertex (GLASS/ES2) | triangle morphs between two shapes by a uniform | ✅ done |
 
 ---
@@ -38,8 +41,11 @@ The geometry stage uniquely sees a *whole primitive* and can *emit more* geometr
   width); pair with additive blending for a glowing wireframe, or animate an edge "scan."
 - **Tumbling debris field** — like the explode, but give each shard its **own** rotation from a
   per-primitive seed + time, so faces tumble independently instead of moving rigidly outward.
-- **GPU particles from points** — feed a point cloud; GS emits a camera-facing quad per point (1→2 tris)
-  → sparks, snow, a starfield. Orbit/animate the points in the vertex shader.
+- **GPU particles from points** — feed a point cloud; GS emits a camera-facing quad per point → sparks,
+  snow, a starfield. ✅ *Built (`citro3d-starfield`): point cloud (stride 2), GS emits each point as a
+  camera-facing quad — a 4-triangle fan with a bright centre + zero-alpha rim, so additive blending makes
+  a soft round glow; billboard right/up are the camera basis in model space (R^T uniforms, like the fur
+  headlight); the field tumbles + Circle-Pad steers.*
 - **Poor-man's tessellation** — the PICA has no tessellation stage, so GS amplification is the stand-in:
   subdivide a coarse grid and displace the new verts → animated water/terrain from a tiny input mesh.
 - **Shatter-into-shards** — subdivide each face (like the stock geoshader's 1→3) *and* explode the
@@ -68,7 +74,10 @@ The geometry stage uniquely sees a *whole primitive* and can *emit more* geometr
 ## 3DS-specific angles
 
 - **Stereoscopic 3D** — render with a per-eye offset projection so exploding shards literally pop out of
-  the screen. The genuinely-3DS "wow" none of the current demos use yet.
+  the screen. The genuinely-3DS "wow". ✅ *Built (`citro3d-icosahedron-stereo`): `gfxSet3D(true)`, two
+  render targets (GFX_LEFT/GFX_RIGHT), `Mtx_PerspStereoTilt` per eye with the zero-parallax plane at the
+  object distance, `osGet3DSliderState()` driving the interocular offset; right eye skipped when the
+  slider is at 0.*
 - **Both screens** + touch/circle-pad/slider to drive bloom, rotation, opacity, or eye separation live.
   (The icosahedron already uses the bottom screen for a text HUD — could go interactive.)
 
@@ -89,9 +98,9 @@ The geometry stage uniquely sees a *whole primitive* and can *emit more* geometr
 
 ## Suggested next builds (impact-per-effort)
 
-1. **Stereoscopic-3D explode** — reuse the icosahedron, add a per-eye offset projection. Biggest 3DS-only
-   wow.
-2. **GPU particle starfield** — points → billboard quads in the GS; additive glow.
+1. ~~**Stereoscopic-3D explode**~~ — ✅ done (`citro3d-icosahedron-stereo`).
+2. ~~**GPU particle starfield**~~ — ✅ done (`citro3d-starfield`).
 3. **Wave/flag** — first vertex-shader effect that needs the polynomial-`sin` trick.
+4. ~~**Stereo starfield**~~ — ✅ done (`citro3d-starfield-stereo`).
 
 See `../3ds-opengl-landscape.md` (§7 examples, §9 gotchas) for build details and the PICA pitfalls.
