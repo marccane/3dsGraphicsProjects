@@ -8,9 +8,9 @@
 .gsh point c0
 
 .fvec projection[4]   ; MVP (perspective * view * model-rotation), animated on CPU
-.fvec params          ; x = bloom (explode) ; y = alpha floor ; z = alpha gain
+.fvec params          ; x = bloom ; y = alpha floor ; z = alpha gain ; w = random-mode flag
 
-.constf consts(0.0, 1.0, 0.35, 0.0)              ; x = 0 ; y = 1.0 ; z = ambient
+.constf consts(0.0, 1.0, 0.65, 0.0)              ; x = 0 ; y = 1.0 ; z = ambient (kept high so colours stay vivid)
 .constf lightdir(0.4082, 0.4082, 0.8165, 0.0)    ; normalised light direction
 .alias  zero    consts.xxxx
 .alias  one     consts.yyyy
@@ -42,9 +42,16 @@
 	; RGB diffuse shading, floored at ambient (kept in BOTH modes)
 	max r5, ambient, r6       ; r5 = max(N·L, ambient)
 
-	; per-face ALPHA = clamp(floor + gain * max(N·L, 0), 0, 1)
-	;   params.y = floor, params.z = gain  (CPU picks them per mode: glass vs solid)
-	max r4, zero, r6          ; r4 = max(N·L, 0)
+	; per-face ALPHA = clamp(floor + gain * vary, 0, 1)
+	;   vary = mix( max(N·L,0), randFace, params.w )
+	;     params.w = 0 -> light-based opacity (glass/solid)
+	;     params.w = 1 -> RANDOM per-face opacity (dynamic mode): random faces stay solid
+	;   randFace = per-face random seed carried in the incoming colour's alpha (v1.w)
+	;   params.y = floor, params.z = gain
+	max r4, zero, r6          ; r4 = ndl = max(N·L, 0)
+	add r10, v1.wwww, -r4     ; randFace - ndl   (input v1 + temp r4 = one input)
+	mul r10, params.wwww, r10 ; * modeFlag       (uniform src1)
+	add r4, r4, r10           ; vary = ndl + modeFlag*(randFace - ndl)
 	mul r4, params.zzzz, r4   ; * gain   (uniform src1)
 	add r4, params.yyyy, r4   ; + floor  (uniform src1)
 	min r4, one, r4           ; clamp to 1 (const src1)

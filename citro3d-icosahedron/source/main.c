@@ -14,6 +14,7 @@
 #include <citro3d.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "program_shbin.h"
 
@@ -36,6 +37,8 @@ static shaderProgram_s program;
 static int uLoc_projection, uLoc_params;
 static C3D_Mtx projection;
 static void* vbo_data;
+
+static float frand(void) { return (float)rand() / (float)RAND_MAX; }
 
 static void hsv(float h, float s, float v, float* r, float* g, float* b)
 {
@@ -62,13 +65,15 @@ static void buildIcosahedron(void)
 		{3,9,4},{3,4,2},{3,2,6},{3,6,8},{3,8,9},
 		{4,9,5},{2,4,11},{6,2,10},{8,6,7},{9,8,1},
 	};
+	srand((u32)svcGetSystemTick());
 	for (int f = 0; f < N_FACES; ++f) {
 		float r, g, b;
-		hsv((float)f / N_FACES, 0.85f, 1.0f, &r, &g, &b);
+		hsv(frand(), 1.0f, 1.0f, &r, &g, &b);  // fully-saturated random hue -> vivid, varied
+		float seed = frand();                   // per-face random "solidity", used by DYNAMIC mode
 		for (int k = 0; k < 3; ++k) {
 			const float* p = V[F[f][k]];
 			float inv = 1.0f / sqrtf(p[0]*p[0] + p[1]*p[1] + p[2]*p[2]); // -> unit sphere
-			vertex_list[f*3+k] = (vertex){ { p[0]*inv, p[1]*inv, p[2]*inv }, { r, g, b, 1.0f } };
+			vertex_list[f*3+k] = (vertex){ { p[0]*inv, p[1]*inv, p[2]*inv }, { r, g, b, seed } };
 		}
 	}
 }
@@ -111,7 +116,7 @@ static void sceneInit(void)
 	C3D_CullFace(GPU_CULL_NONE);                  // shards expose their back faces
 }
 
-static void sceneRender(float ax, float ay, float bloom, float aFloor, float aGain)
+static void sceneRender(float ax, float ay, float bloom, float aFloor, float aGain, float randMix)
 {
 	C3D_Mtx modelView;
 	Mtx_PerspTilt(&projection, C3D_AngleFromDegrees(45.0f), C3D_AspectRatioTop, 0.01f, 1000.0f, false);
@@ -124,8 +129,8 @@ static void sceneRender(float ax, float ay, float bloom, float aFloor, float aGa
 	Mtx_Multiply(&mvp, &projection, &modelView);
 
 	C3D_FVUnifMtx4x4(GPU_GEOMETRY_SHADER, uLoc_projection, &mvp);
-	// params: x = bloom, y = alpha floor, z = alpha gain
-	C3D_FVUnifSet(GPU_GEOMETRY_SHADER, uLoc_params, bloom, aFloor, aGain, 0.0f);
+	// params: x = bloom, y = alpha floor, z = alpha gain, w = random-mode flag (0/1)
+	C3D_FVUnifSet(GPU_GEOMETRY_SHADER, uLoc_params, bloom, aFloor, aGain, randMix);
 
 	C3D_DrawArrays(GPU_GEOMETRY_PRIM, 0, VTX_COUNT);
 }
@@ -160,7 +165,7 @@ int main()
 	float ax = 0.0f, ay = 0.0f, tt = 0.0f;
 	bool  solid = false;       // B toggles glass <-> solid
 	bool  dynamic = false;     // Y toggles auto-opacity synced to the explosion
-	float glassFloor = 0.22f;  // minimum opacity in glass mode (D-pad L/R tunes it live)
+	float glassFloor = 0.45f;  // minimum opacity in glass mode (D-pad L/R tunes it live)
 
 	while (aptMainLoop())
 	{
@@ -206,7 +211,7 @@ int main()
 		C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
 			C3D_RenderTargetClear(target, C3D_CLEAR_ALL, CLEAR_COLOR, 0);
 			C3D_FrameDrawOn(target);
-			sceneRender(ax, ay, bloom, aFloor, aGain);
+			sceneRender(ax, ay, bloom, aFloor, aGain, dynamic ? 1.0f : 0.0f);
 		C3D_FrameEnd(0);
 	}
 
