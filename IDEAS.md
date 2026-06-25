@@ -20,7 +20,8 @@ built in this folder.
 | `citro3d-fur/` | geometry | furry ball — each triangle sprouts a hair along its normal (1→2 tris), bristles + wind sway | ✅ done |
 | `citro3d-starfield-stereo/` | geometry | GPU particle **stereoscopic** starfield — each **point** sprouts a camera-facing glowing quad (1→4 tris); additive bloom, per-eye projection, stars at real depths | ✅ done |
 | `citro3d-shadow-stereo/` | fixed-function lighting | **hardware shadow mapping** (stereo) — 2-pass: torus rendered to a depth texture from the light's POV, then shadow compare in the lighting unit; orbiting light sweeps a real shadow on a floor | ✅ done |
-| `citro3d-shadow-explode-stereo/` | geometry + fixed-function lighting | **exploding icosahedron casting real shadows** (stereo) — GS caster renders the shards' depth from the light; the flat-shaded shards cast an animated shadow on a floor | ✅ done |
+| `citro3d-shadow-explode-stereo/` | geometry + fixed-function lighting | **exploding icosahedron casting real shadows** (stereo) — GS caster renders the shards' depth from the light; shards cast on a floor **and self-shadow** (the receiver GS drives the fragment-lighting unit — see A.4) | ✅ done |
+| `citro3d-shadow-debris-stereo/` | geometry + fixed-function lighting | **self-shadowing debris field** (stereo) — a tight cluster of independently-tumbling shards (CPU Rodrigues → dynamic VBO) that visibly **shadow each other** + the floor; the clearest self-shadowing demo | ✅ done |
 | `GLASS-morph/` | vertex (GLASS/ES2) | triangle morphs between two shapes by a uniform | ✅ done |
 
 ---
@@ -39,8 +40,13 @@ The geometry stage uniquely sees a *whole primitive* and can *emit more* geometr
   hairs by reallocating + regenerating the sphere VBO (grows until linear memory runs out).*
 - **Instant wireframe / neon outline** — emit each triangle's 3 edges as thin quads (PICA lines have no
   width); pair with additive blending for a glowing wireframe, or animate an edge "scan."
-- **Tumbling debris field** — like the explode, but give each shard its **own** rotation from a
-  per-primitive seed + time, so faces tumble independently instead of moving rigidly outward.
+- **Tumbling debris field** — like the explode, but give each shard its **own** rotation so faces tumble
+  independently instead of moving rigidly outward. ✅ *Built (`citro3d-shadow-debris-stereo`): the CPU
+  tumbles each shard (Rodrigues rotation about its centroid — no `sin`/`cos` on the PICA) into a dynamic
+  VBO; the GS lights + self-shadows them. Because the cluster stays tight and constantly reorients, shards
+  continuously occlude one another → it's the demo where **self-shadowing is actually visible** (a radial
+  explode barely self-occludes — convex pieces flying apart). Key tuning: keep the light in the camera-side
+  arc so the shards you see are lit (a shadow only shows on an already-lit face).*
 - **GPU particles from points** — feed a point cloud; GS emits a camera-facing quad per point → sparks,
   snow, a starfield. ✅ *Built (`citro3d-starfield-stereo`): point cloud (stride 2), GS emits each point as
   a camera-facing quad — a 4-triangle fan with a bright centre + zero-alpha rim, so additive blending
@@ -197,19 +203,38 @@ of them** (see A.5, which supersedes the best-effort ⚠️/❌ tags above for t
    `view`**, and the TEV **adds** `GPU_FRAGMENT_PRIMARY_COLOR` (diffuse+ambient) + `GPU_FRAGMENT_SECONDARY_COLOR`
    (specular). Material is `{ambient, diffuse, specular0, specular1, emission}`.
 2. **Shadow mapping** — real **two-pass hardware** shadow mapping (the genuinely-cool one). ✅ **Built**
-   twice: `citro3d-shadow-stereo` (orbiting light, torus self-shadowing + casting onto a floor, tunable
-   bias, stereo) and `citro3d-shadow-explode-stereo` (**the exploding icosahedron casting real shadows** —
-   a geometry-shader *caster* renders the displaced shards' depth from the light, so the flat-shaded
-   shards throw an animated shadow on the floor; the GS only outputs position/colour, so the unverified
-   "GS → fragment-lighting" path is sidestepped — only the floor uses the lighting unit). Based on
-   `/opt/devkitpro/examples/3ds/graphics/gpu/shadow_mapping`: **pass 1** renders the caster from the light's
-   POV into a **depth texture** (`C3D_TexInitShadow(&tex,512,512)` + `C3D_RenderTargetCreateFromTex(&tex,
-   GPU_TEXFACE_2D, 0, GPU_RB_DEPTH16)`, light uses an ortho `Mtx_LookAt`/`Mtx_Ortho`); **pass 2** renders
-   from the camera with the shadow compare done **in the lighting unit** (`C3D_LightShadowEnable`,
-   `C3D_LightEnvShadowMode(GPU_SHADOW_PRIMARY)`, `C3D_LightEnvShadowSel(0)`, `C3D_TexShadowParams(false,
-   bias)`; shadow map bound on texunit 0, `GPU_CLAMP_TO_BORDER` + white border so off-map = lit). Receiver
-   VS computes the shadow-map UV from a `light_viewproj` uniform. Tunable `bias` kills shadow acne. This
-   **upgrades the A.3 "soft shadowing / shadow" tag from ⚠️/❌ to ✅.**
+   three times: `citro3d-shadow-stereo` (orbiting light, torus self-shadowing + casting onto a floor),
+   `citro3d-shadow-explode-stereo` (the exploding icosahedron casting on a floor **and self-shadowing**),
+   and `citro3d-shadow-debris-stereo` (a tumbling shard cluster where self-shadows are clearly visible).
+   Based on `/opt/devkitpro/examples/3ds/graphics/gpu/shadow_mapping`: **pass 1** renders the caster from
+   the light's POV into a **depth texture** (`C3D_TexInitShadow(&tex,512,512)` +
+   `C3D_RenderTargetCreateFromTex(&tex, GPU_TEXFACE_2D, 0, GPU_RB_DEPTH16)`, light uses an ortho
+   `Mtx_LookAt`/`Mtx_Ortho`); **pass 2** renders from the camera with the shadow compare done **in the
+   lighting unit** (`C3D_LightShadowEnable`, `C3D_LightEnvShadowMode(GPU_SHADOW_PRIMARY)`,
+   `C3D_LightEnvShadowSel(0)`, `C3D_TexShadowParams(false, bias)`; shadow map bound on texunit 0,
+   `GPU_CLAMP_TO_BORDER` + white border so off-map = lit). The receiver computes the shadow-map UV from a
+   `light_viewproj` uniform. Tunable `bias` kills shadow acne. The caster pass **must** disable blending via
+   `C3D_ColorLogicOp(GPU_LOGICOP_COPY)` — the shadow map stores depth in the **alpha** channel (see §9 of
+   the landscape doc). This **upgrades the A.3 "soft shadowing / shadow" tag from ⚠️/❌ to ✅.**
+
+   > **CONFIRMED (and it contradicts the cautious note I wrote first): a geometry shader CAN drive the
+   > PICA fragment-lighting unit on real hardware.** I'd assumed only a *vertex* shader could emit the
+   > lighting-unit inputs (`normalquat`/`view`/projective shadow texcoord) because **no shipped example
+   > does it from a GS** (`loop_subdivision`'s GS outputs only `position`+`dummy`). But picasso *assembles*
+   > a GS that declares those outputs, and the hardware *honours* them: in `citro3d-shadow-explode-stereo`
+   > and `citro3d-shadow-debris-stereo` the **receiver geometry shader** computes the per-face normal,
+   > encodes it as `normalquat`, and emits `view` + the projective shadow texcoord — so GS-generated
+   > geometry is lit *and self-shadowed* by the fixed-function unit. This means amplified/GS-only geometry
+   > (fur, explosions, debris, particles) can now use **real hardware lighting + shadows**, not just faked
+   > VS/GS shading. (Encoding ported verbatim from the stock `shadow_receiver` VS; per-face flat normal →
+   > one `normalquat` per face, reused for its 3 emitted vertices.)
+   >
+   > **Caveat — making self-shadows *visible* is a scene-design problem, not a tech one:** a shadow only
+   > shows on a surface that's **lit**, and a **convex** solid never self-shadows. A radial explosion of
+   > convex shards barely self-occludes (`-explode` casts gorgeous floor shadows but its own self-shadows
+   > are nearly invisible). The fix is the **debris** arrangement: a tight cluster of independently-tumbling
+   > shards constantly occludes itself, *and* keep the light on the **camera side** so the shards you see
+   > are lit (orbiting it fully behind leaves >50% of visible shards dark → nothing to shadow).
 3. **Post-process bloom** — render the scene to a texture, bright-pass + separable blur passes, composite
    additively. Makes the existing glow demos (starfield, exploding solid) genuinely bloom. Pure
    render-to-texture; no new shader stage needed. (No single stock example, but `shadow_mapping` proves the

@@ -1,0 +1,124 @@
+; Geometry shader — exploding icosahedron, CAMERA pass, as a SHADOW RECEIVER.
+;
+; Explodes the icosahedron (cross-product face normal, displace each face out by
+; `bloom` in model space) AND emits the PICA fragment-lighting-unit semantics
+; per vertex — `normalquat` (the world normal encoded as a quaternion), `view`,
+; and the projective shadow-map texcoord — so the icosahedron is LIT and
+; SELF-SHADOWED by the same shadow map the caster filled. The face is flat, so
+; the normalquat is computed once per face and reused for its 3 vertices.
+;
+; The normalquat encoding and shadow-texcoord math are ported verbatim from the
+; stock devkitPro shadow_receiver VS; only the per-vertex transforms are wrapped
+; so they run on the exploded geometry.
+.gsh point c0
+
+.fvec model[4]
+.fvec view[4]
+.fvec proj[4]
+.fvec light_viewproj[4]
+.fvec params           ; x = bloom
+
+.constf myconst(0.0, 1.0, -1.0, 0.5)
+.alias  zeros myconst.xxxx
+.alias  ones  myconst.yyyy
+.alias  half  myconst.wwww
+
+.out outpos  position
+.out outview view
+.out outtc0  texcoord0.st
+.out -       texcoord0w outtc0.p
+.out outnq   normalquat
+.out outclr  color
+
+.entry gmain
+.proc gmain
+	; model-space face normal (cross product of two edges)
+	mov r0, v0
+	add r1, v2, -r0
+	add r2, v4, -r0
+	mul r3, r1.yzxw, r2.zxyw
+	mul r4, r1.zxyw, r2.yzxw
+	add r3, r3, -r4
+	dp3 r5, r3, r3
+	rsq r5, r5
+	mul r3, r3, r5            ; r3 = unit model-space face normal
+
+	mul r7, params.xxxx, r3   ; displacement = normal * bloom
+
+	; world normal = normalize(model * modelNormal)  (for the lighting unit)
+	dp3 r14.x, model[0], r3
+	dp3 r14.y, model[1], r3
+	dp3 r14.z, model[2], r3
+	dp3 r6.x, r14, r14
+	rsq r6.x, r6.x
+	mul r14.xyz, r14.xyz, r6.x
+
+	; encode world normal as a quaternion -> r12 (ported from stock receiver)
+	mov r0, myconst.yxxx
+	add r4, ones, r14.z
+	mul r4, half, r4
+	cmp zeros, ge, ge, r4.x
+	rsq r4, r4.x
+	mul r5, half, r14
+	jmpc cmp.x, degenerate
+	rcp r0.z, r4.x
+	mul r0.xy, r5, r4
+degenerate:
+	mov r12, r0              ; r12 = normalquat (shared by the 3 face vertices)
+
+	; --- emit the 3 displaced vertices ---
+	setemit 0
+	add r8.xyz, v0, r7
+	mov r8.w, ones
+	mov r9, v1
+	call recv_emit
+	emit
+	setemit 1
+	add r8.xyz, v2, r7
+	mov r8.w, ones
+	mov r9, v3
+	call recv_emit
+	emit
+	setemit 2, prim
+	add r8.xyz, v4, r7
+	mov r8.w, ones
+	mov r9, v5
+	call recv_emit
+	emit
+	end
+.end
+
+; r8 = model-space displaced vertex (w=1), r9 = colour, r12 = normalquat
+.proc recv_emit
+	; world = model * r8
+	dp4 r10.x, model[0], r8
+	dp4 r10.y, model[1], r8
+	dp4 r10.z, model[2], r8
+	dp4 r10.w, model[3], r8
+
+	; eye = view * world ; outview = -eye
+	dp4 r11.x, view[0], r10
+	dp4 r11.y, view[1], r10
+	dp4 r11.z, view[2], r10
+	dp4 r11.w, view[3], r10
+	mov outview, -r11
+
+	; outpos = proj * eye
+	dp4 outpos.x, proj[0], r11
+	dp4 outpos.y, proj[1], r11
+	dp4 outpos.z, proj[2], r11
+	dp4 outpos.w, proj[3], r11
+
+	; shadow texcoord = (light_viewproj * world) / w * 0.5 + 0.5
+	dp4 r13.x, light_viewproj[0], r10
+	dp4 r13.y, light_viewproj[1], r10
+	dp4 r13.z, light_viewproj[2], r10
+	dp4 r13.w, light_viewproj[3], r10
+	rcp r13.w, r13.w
+	mul r13, r13.w, r13
+	mov r6, half
+	mad outtc0, r13, r6, r6
+
+	mov outnq,  r12
+	mov outclr, r9
+.end
