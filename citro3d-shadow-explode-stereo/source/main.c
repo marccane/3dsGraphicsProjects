@@ -68,7 +68,7 @@ static float bias;
 static DVLB_s* caster_dvlb;   static shaderProgram_s caster_prog;
 static int caster_uLoc_lightmvp, caster_uLoc_params;
 static DVLB_s* ico_dvlb;      static shaderProgram_s ico_prog;
-static int ico_uLoc_proj, ico_uLoc_lightdir, ico_uLoc_params;
+static int ico_uLoc_model, ico_uLoc_view, ico_uLoc_proj, ico_uLoc_lightvp, ico_uLoc_params;
 static DVLB_s* floor_dvlb;    static shaderProgram_s floor_prog;
 static int flr_uLoc_proj, flr_uLoc_view, flr_uLoc_model, flr_uLoc_light_vp;
 
@@ -80,13 +80,21 @@ static void *ico_vbo, *floor_vbo;
 
 // Per-frame state shared by the two passes.
 static C3D_Mtx g_model, g_view, g_light_view, g_light_proj, g_light_vp;
-static C3D_FVec g_lightdir_model;
 static float g_bloom;
 
 static const C3D_Material mat_floor =
 {
 	{ 0.13f, 0.14f, 0.18f }, // ambient
 	{ 0.40f, 0.44f, 0.54f }, // diffuse (cool slate)
+	{ 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f },
+};
+// White material for the icosahedron: the lit + self-shadowed grey from the
+// lighting unit is multiplied by each face's vivid colour in the TEV. Ambient
+// kept up so shadowed / back faces stay coloured rather than going black.
+static const C3D_Material mat_ico =
+{
+	{ 0.22f, 0.22f, 0.22f }, // ambient (low -> self-shadowed faces drop clearly below lit ones)
+	{ 0.95f, 0.95f, 0.95f }, // diffuse
 	{ 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f },
 };
 
@@ -169,9 +177,11 @@ static void sceneInit(void)
 	shaderProgramInit(&ico_prog);
 	shaderProgramSetVsh(&ico_prog, &ico_dvlb->DVLE[0]);
 	shaderProgramSetGsh(&ico_prog, &ico_dvlb->DVLE[1], 6);
-	ico_uLoc_proj     = shaderInstanceGetUniformLocation(ico_prog.geometryShader, "projection");
-	ico_uLoc_lightdir = shaderInstanceGetUniformLocation(ico_prog.geometryShader, "lightdir");
-	ico_uLoc_params   = shaderInstanceGetUniformLocation(ico_prog.geometryShader, "params");
+	ico_uLoc_model  = shaderInstanceGetUniformLocation(ico_prog.geometryShader, "model");
+	ico_uLoc_view   = shaderInstanceGetUniformLocation(ico_prog.geometryShader, "view");
+	ico_uLoc_proj   = shaderInstanceGetUniformLocation(ico_prog.geometryShader, "proj");
+	ico_uLoc_lightvp= shaderInstanceGetUniformLocation(ico_prog.geometryShader, "light_viewproj");
+	ico_uLoc_params = shaderInstanceGetUniformLocation(ico_prog.geometryShader, "params");
 
 	// Floor program (stock receiver vsh only).
 	floor_dvlb = DVLB_ParseFile((u32*)shadow_receiver_shbin, shadow_receiver_shbin_size);
@@ -215,23 +225,16 @@ static void updateFrame(float ax, float ay, float bloom, float lightT)
 
 	Mtx_LookAt(&g_view, FVec3_New(0, 3.2f, 6.5f), FVec3_New(0, -0.3f, 0), FVec3_New(0, 1, 0), false);
 
-	// Orbiting light.
-	C3D_FVec lpos = FVec3_New(4.2f * cosf(lightT), 5.0f, 4.2f * sinf(lightT));
+	// Orbiting light — lowered (grazing) so shadows rake laterally across the shards.
+	C3D_FVec lpos = FVec3_New(4.2f * cosf(lightT), 3.2f, 4.2f * sinf(lightT));
 	Mtx_LookAt(&g_light_view, lpos, FVec3_New(0, 0, 0), FVec3_New(0, 1, 0), false);
 	Mtx_Ortho(&g_light_proj, -3.5f, 3.5f, -3.5f, 3.5f, 1.0f, 13.0f, false);
 	Mtx_Multiply(&g_light_vp, &g_light_proj, &g_light_view);
 
 	// Lighting-unit light direction (world space, directional) = toward the light.
+	// Used by BOTH the floor and the icosahedron (both are lit receivers now).
 	C3D_FVec ldir = FVec4_New(lpos.x, lpos.y, lpos.z, 0.0f);
 	C3D_LightPosition(&light, &ldir);
-
-	// Icosahedron shading light in MODEL space = R^T * worldLightDir (the fur "headlight" trick),
-	// so the flat shading tracks the same orbiting light that casts the shadow.
-	C3D_Mtx rt;
-	Mtx_Identity(&rt);
-	Mtx_RotateY(&rt, -ay, true);
-	Mtx_RotateX(&rt, -ax, true);              // rt = Ry(-ay)*Rx(-ax) = inverse model rotation
-	g_lightdir_model = Mtx_MultiplyFVec4(&rt, FVec4_New(lpos.x, lpos.y, lpos.z, 0.0f));
 }
 
 // Pass 1: exploding icosahedron -> shadow map (from the light's POV).
@@ -288,21 +291,25 @@ static void sceneRender(float iod)
 	C3D_SetBufInfo(&floor_buf);
 	C3D_DrawArrays(GPU_TRIANGLES, 0, 6);
 
-	// --- Icosahedron: its own flat shading (no shadow reception) ---
+	// --- Icosahedron: lit + SELF-SHADOWING receiver (GS emits lighting semantics) ---
 	C3D_BindProgram(&ico_prog);
 	useIcoAttr();
-	C3D_LightEnvBind(NULL);                     // icosahedron isn't lit by the unit
+	C3D_LightEnvMaterial(&lightEnv, &mat_ico);   // white -> lit/shadow grey, coloured by the TEV below
 
+	// RGB = lit+self-shadowed grey * each face's vivid colour; force alpha = 1 (PRIMARY_COLOR.a)
+	// so the shards are fully OPAQUE regardless of the lighting unit's alpha / blend state.
 	env = C3D_GetTexEnv(0);
 	C3D_TexEnvInit(env);
-	C3D_TexEnvSrc(env, C3D_Both, GPU_PRIMARY_COLOR, 0, 0);
-	C3D_TexEnvFunc(env, C3D_Both, GPU_REPLACE);
+	C3D_TexEnvSrc(env, C3D_RGB,   GPU_FRAGMENT_PRIMARY_COLOR, GPU_PRIMARY_COLOR, 0);
+	C3D_TexEnvFunc(env, C3D_RGB,   GPU_MODULATE);
+	C3D_TexEnvSrc(env, C3D_Alpha, GPU_PRIMARY_COLOR, 0, 0);
+	C3D_TexEnvFunc(env, C3D_Alpha, GPU_REPLACE);
 
-	C3D_Mtx mvp;
-	Mtx_Multiply(&mvp, &proj, &g_view);
-	Mtx_Multiply(&mvp, &mvp, &g_model);         // proj * view * model
-	C3D_FVUnifMtx4x4(GPU_GEOMETRY_SHADER, ico_uLoc_proj, &mvp);
-	C3D_FVUnifSet(GPU_GEOMETRY_SHADER, ico_uLoc_lightdir, g_lightdir_model.x, g_lightdir_model.y, g_lightdir_model.z, 0.0f);
+	// The GS rebuilds world/eye/clip/shadow itself, so it needs the matrices separately.
+	C3D_FVUnifMtx4x4(GPU_GEOMETRY_SHADER, ico_uLoc_model,   &g_model);
+	C3D_FVUnifMtx4x4(GPU_GEOMETRY_SHADER, ico_uLoc_view,    &g_view);
+	C3D_FVUnifMtx4x4(GPU_GEOMETRY_SHADER, ico_uLoc_proj,    &proj);
+	C3D_FVUnifMtx4x4(GPU_GEOMETRY_SHADER, ico_uLoc_lightvp, &g_light_vp);
 	C3D_FVUnifSet(GPU_GEOMETRY_SHADER, ico_uLoc_params, g_bloom, 0, 0, 0);
 
 	C3D_SetBufInfo(&ico_buf);
@@ -361,8 +368,10 @@ int main()
 		if (bias < 0.0f)  bias = 0.0f;
 		if (bias > 0.05f) bias = 0.05f;
 
-		if (!paused) { ax += 0.011f; ay += 0.017f; tt += 0.028f; lightT += 0.006f; }
-		float bloom = 0.5f + 0.5f * sinf(tt);   // closed (0) <-> blown apart (1)
+		if (!paused) { ax += 0.011f; ay += 0.017f; tt += 0.018f; lightT += 0.006f; }
+		// Stay in the partial-explosion sweet spot (never fully assembled, never fully
+		// scattered) so shards keep occluding each other -> continuous self-shadowing.
+		float bloom = 0.40f + 0.22f * sinf(tt);  // range ~0.18 .. 0.62
 
 		updateFrame(ax, ay, bloom, lightT);
 
