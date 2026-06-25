@@ -1,0 +1,64 @@
+; Vertex shader — WAVING FLAG (travelling-wave vertex displacement).
+;
+; The PICA has no sin/cos opcode. But the wave's SPATIAL phase  s = kx*x + ky*y
+; is constant per vertex (the flag mesh never changes), so the CPU precomputes
+; sin(s) and cos(s) once at build time and ships them as the `inwave` attribute.
+; The travelling wave is then the angle-addition identity, evaluated here:
+;
+;   sin(s + wt) = sin(s)*cos(wt) + cos(s)*sin(wt)
+;   cos(s + wt) = cos(s)*cos(wt) - sin(s)*sin(wt)
+;
+; where (cos(wt), sin(wt)) is a per-frame uniform the CPU computes. No in-shader
+; sin, no range reduction — exact. Z is displaced by amp * pin(x) * sin(s+wt)
+; (pinned at the pole so amplitude grows toward the free edge), and cos(s+wt) is
+; reused as a cheap slope-based shading term so the ripples catch light.
+.fvec projection[4]    ; MVP (perspective * view * model)
+.fvec timewave         ; x = cos(wt), y = sin(wt)
+.fvec wparams          ; x = amplitude
+
+.constf consts(0.0, 1.0, 0.5, 0.0)   ; zero, one, half
+.constf shade(0.58, 0.42, 0.0, 0.0)  ; x = base brightness, y = ripple range
+.alias  one  consts.yyyy
+.alias  half consts.zzzz
+
+.out outpos position
+.out outclr color
+
+.alias inpos  v0       ; (x, y, 0)
+.alias inwave v1       ; (sin(s), cos(s))
+.alias incol  v2       ; (r, g, b)
+
+.proc main
+	; sinSum = sin(s)*cos(wt) + cos(s)*sin(wt)
+	mul r0, timewave, inwave              ; r0.x = cos(wt)*sin(s), r0.y = sin(wt)*cos(s)
+	add r1, r0.xxxx, r0.yyyy              ; r1 = sinSum (all lanes)
+
+	; cosSum = cos(s)*cos(wt) - sin(s)*sin(wt)
+	mul r2.x, timewave.xxxx, inwave.yyyy  ; cos(wt)*cos(s)
+	mul r3.x, timewave.yyyy, inwave.xxxx  ; sin(wt)*sin(s)
+	add r4, r2.xxxx, -r3.xxxx             ; r4 = cosSum (all lanes)
+
+	; pin = (x + 1) * 0.5   -> 0 at the pole (x=-1), 1 at the free edge (x=+1)
+	add r5.x, one,  inpos.x
+	mul r5.x, half, r5.x
+
+	; z = amplitude * pin * sinSum
+	mul r6.x, wparams.xxxx, r5.x
+	mul r6.x, r6.x, r1.x
+
+	; displaced position -> MVP
+	mov r7, inpos
+	mov r7.z, r6.x
+	mov r7.w, one
+	dp4 outpos.x, projection[0], r7
+	dp4 outpos.y, projection[1], r7
+	dp4 outpos.z, projection[2], r7
+	dp4 outpos.w, projection[3], r7
+
+	; shading = base + range * cosSum  (slopes facing "up" the travel dir are brighter)
+	mul r8, shade.yyyy, r4
+	add r8, shade.xxxx, r8
+	mul outclr.xyz, incol, r8
+	mov outclr.w,   one
+	end
+.end

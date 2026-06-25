@@ -22,6 +22,7 @@ built in this folder.
 | `citro3d-shadow-stereo/` | fixed-function lighting | **hardware shadow mapping** (stereo) — 2-pass: torus rendered to a depth texture from the light's POV, then shadow compare in the lighting unit; orbiting light sweeps a real shadow on a floor | ✅ done |
 | `citro3d-shadow-explode-stereo/` | geometry + fixed-function lighting | **exploding icosahedron casting real shadows** (stereo) — GS caster renders the shards' depth from the light; shards cast on a floor **and self-shadow** (the receiver GS drives the fragment-lighting unit — see A.4) | ✅ done |
 | `citro3d-shadow-debris-stereo/` | geometry + fixed-function lighting | **self-shadowing debris field** (stereo) — a tight cluster of independently-tumbling shards (CPU Rodrigues → dynamic VBO) that visibly **shadow each other** + the floor; the clearest self-shadowing demo | ✅ done |
+| `citro3d-flag-stereo/` | vertex | **waving flag** (stereo) — travelling-wave vertex displacement via the angle-addition identity with **CPU-precomputed per-vertex `sin(s)`/`cos(s)`** (no in-shader sin); pinned at the pole, slope-shaded ripples | ✅ done |
 | `GLASS-morph/` | vertex (GLASS/ES2) | triangle morphs between two shapes by a uniform | ✅ done |
 
 ---
@@ -63,11 +64,19 @@ The geometry stage uniquely sees a *whole primitive* and can *emit more* geometr
   (`citro3d-cubesphere`).*
 - **N-shape morph** — blend a vertex between two (or more) stored positions by uniform weights. ✅
   *Built for 2 shapes (`GLASS-morph`); extend to N shape keys.*
-- **Wave / flag / jelly** — displace verts by a travelling wave from a `time` uniform (flag, water,
-  wobble). Needs a polynomial `sin` approximation (~6 instructions; no native `sin` opcode).
-- **Twist / bend** — rotate each vertex by an angle proportional to its height → twisting column, DNA
-  helix. (Also needs a `sin`/`cos` approximation per vertex.)
+- **Wave / flag / jelly** — displace verts by a travelling wave from a `time` uniform. ✅ *Built
+  (`citro3d-flag-stereo`).* **Key trick — no polynomial `sin` needed:** the wave's spatial phase
+  `s = kx·x + ky·y` is **constant per vertex**, so the CPU precomputes `sin(s)`/`cos(s)` per vertex (a
+  vertex attribute) and the shader builds the travelling wave with the **angle-addition identity**
+  `sin(s+ωt) = sin(s)·cos(ωt) + cos(s)·sin(ωt)`, taking `cos(ωt)`/`sin(ωt)` from a per-frame uniform.
+  Exact, cheap, no range reduction. (The polynomial-`sin` is only *needed* when the argument's spatial
+  part varies per frame — animated wavelength, a moving wave source.) `cos(s+ωt)` is reused as a cheap
+  slope-based shading term; amplitude is pinned at the pole edge.
+- **Twist / bend** — rotate each vertex by an angle ∝ its height → twisting column, DNA helix. *(Same
+  precompute trick as the flag: the per-vertex angle's spatial part `k·height` is constant, so precompute
+  its `sin`/`cos` and rotate via angle-addition with the per-frame `(cos ωt, sin ωt)`.)*
 - **Spherical "breathing"** — push verts along their normals by `amp·wave` (needs a normal attribute).
+  *(Also the flag's precompute trick if the per-vertex phase is static.)*
 - **Plasma vertex colour** — compute colour from position + time via dot products → flowing gradients.
 
 ## Combiner & output tricks (no fragment shader, so lean on these)
@@ -106,7 +115,9 @@ The geometry stage uniquely sees a *whole primitive* and can *emit more* geometr
 
 1. ~~**Stereoscopic-3D explode**~~ — ✅ done (`citro3d-icosahedron-stereo`).
 2. ~~**GPU particle starfield**~~ — ✅ done (`citro3d-starfield-stereo`, in stereo).
-3. **Wave/flag** — first vertex-shader effect that needs the polynomial-`sin` trick.
+3. ~~**Wave/flag**~~ — ✅ done (`citro3d-flag-stereo`) — turned out *not* to need polynomial-`sin`: a
+   per-vertex precomputed spatial `sin`/`cos` + angle-addition is exact and cheaper (see VS effects above).
+4. **Twist / DNA helix** — next vertex-shader effect; reuses the flag's precompute-the-spatial-phase trick.
 
 See `../8-opengl/3ds-opengl-landscape.md` (§7 examples, §9 gotchas) for build details and the PICA pitfalls.
 
