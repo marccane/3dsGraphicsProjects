@@ -23,6 +23,7 @@ built in this folder.
 | `citro3d-shadow-explode-stereo/` | geometry + fixed-function lighting | **exploding icosahedron casting real shadows** (stereo) — GS caster renders the shards' depth from the light; shards cast on a floor **and self-shadow** (the receiver GS drives the fragment-lighting unit — see A.4) | ✅ done |
 | `citro3d-shadow-debris-stereo/` | geometry + fixed-function lighting | **self-shadowing debris field** (stereo) — a tight cluster of independently-tumbling shards (CPU Rodrigues → dynamic VBO) that visibly **shadow each other** + the floor; the clearest self-shadowing demo | ✅ done |
 | `citro3d-flag-stereo/` | vertex | **waving flag** (stereo) — travelling-wave vertex displacement via the angle-addition identity with **CPU-precomputed per-vertex `sin(s)`/`cos(s)`** (no in-shader sin); pinned at the pole, slope-shaded ripples | ✅ done |
+| `citro3d-twist-stereo/` | vertex | **twisting column** (stereo) — each vertex rotated about Y by `θ=k·y+ωt` (same precompute + angle-addition trick as the flag, applied as a rotation); 4 colored faces wind into an animated spiral, lit | ✅ done |
 | `GLASS-morph/` | vertex (GLASS/ES2) | triangle morphs between two shapes by a uniform | ✅ done |
 
 ---
@@ -72,9 +73,11 @@ The geometry stage uniquely sees a *whole primitive* and can *emit more* geometr
   Exact, cheap, no range reduction. (The polynomial-`sin` is only *needed* when the argument's spatial
   part varies per frame — animated wavelength, a moving wave source.) `cos(s+ωt)` is reused as a cheap
   slope-based shading term; amplitude is pinned at the pole edge.
-- **Twist / bend** — rotate each vertex by an angle ∝ its height → twisting column, DNA helix. *(Same
-  precompute trick as the flag: the per-vertex angle's spatial part `k·height` is constant, so precompute
-  its `sin`/`cos` and rotate via angle-addition with the per-frame `(cos ωt, sin ωt)`.)*
+- **Twist / bend** — rotate each vertex by an angle ∝ its height → twisting column, DNA helix. ✅ *Built
+  (`citro3d-twist-stereo`): the per-vertex angle's spatial part `k·y` is constant, so precompute its
+  `sin`/`cos` and rotate `(x,z)` about Y via angle-addition with the per-frame `(cos ωt, sin ωt)` — exactly
+  the flag's trick applied as a rotation. The per-face normal is rotated by the same `θ` and lit (headlight),
+  so the spiralling colored faces catch light.*
 - **Spherical "breathing"** — push verts along their normals by `amp·wave` (needs a normal attribute).
   *(Also the flag's precompute trick if the per-vertex phase is static.)*
 - **Plasma vertex colour** — compute colour from position + time via dot products → flowing gradients.
@@ -117,7 +120,8 @@ The geometry stage uniquely sees a *whole primitive* and can *emit more* geometr
 2. ~~**GPU particle starfield**~~ — ✅ done (`citro3d-starfield-stereo`, in stereo).
 3. ~~**Wave/flag**~~ — ✅ done (`citro3d-flag-stereo`) — turned out *not* to need polynomial-`sin`: a
    per-vertex precomputed spatial `sin`/`cos` + angle-addition is exact and cheaper (see VS effects above).
-4. **Twist / DNA helix** — next vertex-shader effect; reuses the flag's precompute-the-spatial-phase trick.
+4. ~~**Twist / DNA helix**~~ — ✅ done (`citro3d-twist-stereo`); reused the flag's precompute-the-spatial-phase trick as a rotation.
+5. **Spherical breathing** — next vertex-shader effect; same precompute trick (push verts along normals by `amp·sin(s+ωt)`).
 
 See `../8-opengl/3ds-opengl-landscape.md` (§7 examples, §9 gotchas) for build details and the PICA pitfalls.
 

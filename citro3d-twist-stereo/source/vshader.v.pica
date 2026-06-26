@@ -1,0 +1,72 @@
+; Vertex shader — TWISTING COLUMN (per-vertex rotation about Y by angle proportional to height).
+;
+; Same building block as the flag: the twist angle's SPATIAL part  s = k*y  is
+; constant per vertex, so the CPU precomputes sin(s)/cos(s) (the `intw` attribute)
+; and the shader forms  theta = s + wt  via angle addition, taking (cos wt, sin wt)
+; from a per-frame uniform. No in-shader sin, no range reduction.
+;
+;   sin(theta) = sin(s)*cos(wt) + cos(s)*sin(wt)
+;   cos(theta) = cos(s)*cos(wt) - sin(s)*sin(wt)
+;
+; Each vertex's (x,z) is rotated about Y by theta (height y is preserved) -> the
+; column twists, and +wt animates the spiral. The per-face base normal (in xz) is
+; rotated by the same theta and lit by a model-space light (headlight, world-fixed)
+; so the spiralling faces catch light.
+.fvec projection[4]    ; MVP
+.fvec timewave         ; x = cos(wt), y = sin(wt)
+.fvec lightdir         ; light direction in MODEL space (CPU rotates it per frame)
+
+.constf consts(0.0, 1.0, 0.30, 0.0)   ; zero, one, ambient
+.alias  one     consts.yyyy
+.alias  ambient consts.zzzz
+
+.out outpos position
+.out outclr color
+
+.alias inpos v0        ; (x, y, z)
+.alias intw  v1        ; (sin(k*y), cos(k*y))
+.alias innrm v2        ; (nx, nz) base outward normal in the xz plane
+.alias incol v3        ; (r, g, b)
+
+.proc main
+	; theta = k*y + wt
+	mul r0, timewave, intw             ; r0.x = cos(wt)*sin(s), r0.y = sin(wt)*cos(s)
+	add r1, r0.xxxx, r0.yyyy           ; r1 = sin(theta)
+	mul r2.x, timewave.xxxx, intw.yyyy ; cos(wt)*cos(s)
+	mul r3.x, timewave.yyyy, intw.xxxx ; sin(wt)*sin(s)
+	add r2, r2.xxxx, -r3.xxxx          ; r2 = cos(theta)
+
+	; rotate position (x,z) about Y by theta
+	mul r3.x, inpos.x, r2.x            ; x*cos
+	mul r4.x, inpos.z, r1.x            ; z*sin
+	add r3.x, r3.x, -r4.x              ; x' = x cos - z sin
+	mul r4.x, inpos.x, r1.x            ; x*sin
+	mul r5.x, inpos.z, r2.x            ; z*cos
+	add r4.x, r4.x, r5.x               ; z' = x sin + z cos
+
+	mov r6, inpos                      ; keep y
+	mov r6.x, r3.x
+	mov r6.z, r4.x
+	mov r6.w, one
+	dp4 outpos.x, projection[0], r6
+	dp4 outpos.y, projection[1], r6
+	dp4 outpos.z, projection[2], r6
+	dp4 outpos.w, projection[3], r6
+
+	; rotate base normal (nx,nz) by the same theta
+	mul r3.x, innrm.x, r2.x            ; nx*cos
+	mul r4.x, innrm.y, r1.x            ; nz*sin
+	add r3.x, r3.x, -r4.x              ; nx'
+	mul r4.x, innrm.x, r1.x            ; nx*sin
+	mul r5.x, innrm.y, r2.x            ; nz*cos
+	add r4.x, r4.x, r5.x               ; nz'
+
+	; N·L = nx'*Lx + nz'*Lz   (side-face normals have ny = 0)
+	mul r5.x, lightdir.xxxx, r3.x
+	mul r6.x, lightdir.zzzz, r4.x
+	add r5.x, r5.x, r6.x
+	max r5.x, ambient, r5.x            ; max(N·L, ambient)
+	mul outclr.xyz, incol, r5.xxxx     ; colour * shading
+	mov outclr.w,   one
+	end
+.end
