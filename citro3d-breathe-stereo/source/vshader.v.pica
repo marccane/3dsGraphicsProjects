@@ -1,0 +1,60 @@
+; Vertex shader — SPHERICAL BREATHING (per-vertex displacement ALONG the normal).
+;
+; Third effect in the precompute-the-spatial-phase family (after the flag's
+; displacement and the twist's rotation). For a unit sphere the normal IS the
+; position, so "breathe" = scale each vertex radially by 1 + disp, where
+;   disp = ampUniform*sin(wt)  +  ampRipple*sin(s + wt)
+; The ripple's spatial phase s = k*latitude is constant per vertex, so the CPU
+; precomputes sin(s)/cos(s) (the `intw` attribute) and the shader forms sin(s+wt)
+; by angle addition with the per-frame (cos wt, sin wt) uniform — no in-shader sin.
+; (s depends on latitude only, so the coincident pole vertices share it and don't
+; tear.) The bulge amount also brightens the surface so the ripple bands read.
+.fvec projection[4]    ; MVP
+.fvec timewave         ; x = cos(wt), y = sin(wt)
+.fvec amps             ; x = uniform-breath amplitude, y = ripple amplitude
+.fvec lightdir         ; light direction in MODEL space (headlight, world-fixed)
+
+.constf consts(0.0, 1.0, 0.35, 0.9)   ; zero, one, ambient, ripple-highlight gain
+.alias  one     consts.yyyy
+.alias  ambient consts.zzzz
+.alias  gain    consts.wwww
+
+.out outpos position
+.out outclr color
+
+.alias inpos v0        ; unit-sphere position (== surface normal)
+.alias intw  v1        ; (sin(s), cos(s)),  s = k*latitude
+.alias incol v2        ; (r, g, b)
+
+.proc main
+	mov r6, timewave                   ; (cos wt, sin wt) into a temp
+	mov r7, amps                       ; (ampU, ampR) into a temp
+
+	; sin(s + wt) = sin(s)*cos(wt) + cos(s)*sin(wt)
+	mul r0, r6, intw                   ; r0.x = cos(wt)*sin(s), r0.y = sin(wt)*cos(s)
+	add r1, r0.xxxx, r0.yyyy           ; r1 = sin(s + wt)
+
+	; disp = ampU*sin(wt) + ampR*sin(s+wt)
+	mul r2.x, r7.x, r6.y               ; ampU * sin(wt)
+	mul r3.x, r7.y, r1.x               ; ampR * sin(s+wt)
+	add r2.x, r2.x, r3.x               ; r2.x = disp
+	add r3.x, one, r2.x                ; r3.x = scale = 1 + disp
+
+	; displaced position = scale * inpos  (radial = along the normal)
+	mul r4, r3.xxxx, inpos
+	mov r4.w, one
+	dp4 outpos.x, projection[0], r4
+	dp4 outpos.y, projection[1], r4
+	dp4 outpos.z, projection[2], r4
+	dp4 outpos.w, projection[3], r4
+
+	; diffuse on the base radial normal + a bulge highlight so ripples read
+	dp3 r5, lightdir, inpos            ; N·L
+	max r5, ambient, r5                ; lit = max(N·L, ambient)
+	mul r6.x, gain, r2.x               ; gain * disp
+	add r6.x, one, r6.x                ; 1 + gain*disp  (outward bulges brighter)
+	mul r5, r5, r6.xxxx
+	mul outclr.xyz, incol, r5.xxxx
+	mov outclr.w, one
+	end
+.end

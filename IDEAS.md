@@ -24,6 +24,7 @@ built in this folder.
 | `citro3d-shadow-debris-stereo/` | geometry + fixed-function lighting | **self-shadowing debris field** (stereo) — a tight cluster of independently-tumbling shards (CPU Rodrigues → dynamic VBO) that visibly **shadow each other** + the floor; the clearest self-shadowing demo | ✅ done |
 | `citro3d-flag-stereo/` | vertex | **waving flag** (stereo) — travelling-wave vertex displacement via the angle-addition identity with **CPU-precomputed per-vertex `sin(s)`/`cos(s)`** (no in-shader sin); pinned at the pole, slope-shaded ripples | ✅ done |
 | `citro3d-twist-stereo/` | vertex | **twisting column** (stereo) — each vertex rotated about Y by `θ=k·y+ωt` (same precompute + angle-addition trick as the flag, applied as a rotation); 4 colored faces wind into an animated spiral, lit | ✅ done |
+| `citro3d-breathe-stereo/` | vertex | **spherical breathing** (stereo) — each vertex displaced along its normal by `amp·sin(s+ωt)` (precompute + angle-addition, applied radially); pulsing orb with latitude bands rippling pole-to-pole, lit | ✅ done |
 | `GLASS-morph/` | vertex (GLASS/ES2) | triangle morphs between two shapes by a uniform | ✅ done |
 
 ---
@@ -78,8 +79,11 @@ The geometry stage uniquely sees a *whole primitive* and can *emit more* geometr
   `sin`/`cos` and rotate `(x,z)` about Y via angle-addition with the per-frame `(cos ωt, sin ωt)` — exactly
   the flag's trick applied as a rotation. The per-face normal is rotated by the same `θ` and lit (headlight),
   so the spiralling colored faces catch light.*
-- **Spherical "breathing"** — push verts along their normals by `amp·wave` (needs a normal attribute).
-  *(Also the flag's precompute trick if the per-vertex phase is static.)*
+- **Spherical "breathing"** — push verts along their normals by `amp·wave`. ✅ *Built
+  (`citro3d-breathe-stereo`): on a unit sphere the normal **is** the position, so scale each vertex
+  radially by `1 + amp·sin(s+ωt)`. Same precompute + angle-addition trick (`s = k·latitude`, constant per
+  vertex). Latitude-only `s` keeps the coincident pole vertices in sync so the poles don't tear; the bulge
+  amount also brightens the surface so the ripple reads.*
 - **Plasma vertex colour** — compute colour from position + time via dot products → flowing gradients.
 
 ## Combiner & output tricks (no fragment shader, so lean on these)
@@ -121,7 +125,11 @@ The geometry stage uniquely sees a *whole primitive* and can *emit more* geometr
 3. ~~**Wave/flag**~~ — ✅ done (`citro3d-flag-stereo`) — turned out *not* to need polynomial-`sin`: a
    per-vertex precomputed spatial `sin`/`cos` + angle-addition is exact and cheaper (see VS effects above).
 4. ~~**Twist / DNA helix**~~ — ✅ done (`citro3d-twist-stereo`); reused the flag's precompute-the-spatial-phase trick as a rotation.
-5. **Spherical breathing** — next vertex-shader effect; same precompute trick (push verts along normals by `amp·sin(s+ωt)`).
+5. ~~**Spherical breathing**~~ — ✅ done (`citro3d-breathe-stereo`); completes the precompute-trick trio
+   (displacement → rotation → normal-displacement).
+6. **Next frontier: fixed-function / surface** — standalone fragment-lighting + specular showcase,
+   post-process bloom (render-to-texture), procedural texture, cube-map reflection, normal/bump, toon.
+   (Plus geometry-shader leftovers: wireframe/neon outline, shatter-into-shards.)
 
 See `../8-opengl/3ds-opengl-landscape.md` (§7 examples, §9 gotchas) for build details and the PICA pitfalls.
 
